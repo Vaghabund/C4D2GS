@@ -955,7 +955,7 @@ def export_colmap(settings, world_points, target_pos, output_dir,
         for pid, p3d, track in valid_points:
             track_flat = " ".join("{} {}".format(img_id, p2d) for img_id, p2d in track)
             f.write("{} {} {} {} 255 255 255 1.0 {}\n".format(
-                pid, p3d.x, -p3d.y, -p3d.z, track_flat))
+                pid, p3d.x, p3d.y, p3d.z, track_flat))
 
     return {
         "dir": output_dir,

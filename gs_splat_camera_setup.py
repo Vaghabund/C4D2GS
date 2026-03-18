@@ -246,11 +246,14 @@ def camera_center_and_axes_from_matrix(mg):
 def c2w_to_colmap_extrinsics(mg):
     c, xw, yw, zw = camera_center_and_axes_from_matrix(mg)
 
-    # R_c2w with basis columns [xw, yw, zw], then R_w2c = R_c2w^T.
+    # C4D camera local frame: +X right, +Y up, +Z backward.
+    # COLMAP/OpenCV camera frame: +X right, +Y down, +Z forward.
+    # Convert by applying S = diag(1, -1, -1) to the camera-space rows,
+    # i.e. negate the Y and Z rows of R_w2c.
     r_w2c = [
-        [xw.x, xw.y, xw.z],
-        [yw.x, yw.y, yw.z],
-        [zw.x, zw.y, zw.z],
+        [ xw.x,  xw.y,  xw.z],
+        [-yw.x, -yw.y, -yw.z],
+        [-zw.x, -zw.y, -zw.z],
     ]
 
     qw, qx, qy, qz = rotation_matrix_to_quaternion(r_w2c)
@@ -280,7 +283,8 @@ def project_world_to_image_from_camera_matrix(mg, world_point, fx, fy, cx, cy):
 
     depth = -local.z
     u = (fx * (local.x / depth)) + cx
-    v = (fy * (local.y / depth)) + cy
+    # C4D camera Y is up; COLMAP/image Y is down — negate local.y.
+    v = (fy * (-local.y / depth)) + cy
     return u, v
 
 
