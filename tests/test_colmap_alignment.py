@@ -68,6 +68,7 @@ class TestColmapAlignment(unittest.TestCase):
     def setUpClass(cls):
         """Load cameras.txt, images.txt and points3D.txt once for all tests."""
         # cameras.txt — one shared camera model
+        fx = fy = cx = cy = None
         with open(_dataset_path("cameras.txt")) as f:
             for line in f:
                 if line.startswith("#"):
@@ -82,6 +83,10 @@ class TestColmapAlignment(unittest.TestCase):
                     cx, cy = float(parts[6]), float(parts[7])
                 else:
                     raise ValueError("Unsupported camera model: " + model)
+        assert fx is not None and fy is not None and cx is not None and cy is not None, (
+            "cameras.txt contained no parseable camera entry; "
+            "fx/fy/cx/cy were never assigned."
+        )
         cls.fx, cls.fy, cls.cx, cls.cy = fx, fy, cx, cy
 
         # points3D.txt
@@ -121,16 +126,20 @@ class TestColmapAlignment(unittest.TestCase):
             cls.image_data.append({"R": R, "t": t, "obs": obs})
 
     # ------------------------------------------------------------------
+    # Shared projection helper
+    # ------------------------------------------------------------------
 
-    def test_reprojection_error_is_zero(self):
-        """
-        Every (point3D_id, 2D-observation) pair must reproject to within
-        0.1 px of the stored observation using the COLMAP camera extrinsics.
+    def _compute_projection_stats(self):
+        """Iterate every tracked observation once and return aggregate stats.
 
-        A large mean error (>> 1 px) indicates a world-coordinate sign
-        mismatch between points3D.txt and images.txt (the original bug).
+        Returns a dict with:
+          total        – number of (point, camera) pairs checked
+          behind_count – pairs where z_cam <= 0
+          rms_err      – RMS reprojection error in pixels (over visible pairs)
+          max_err      – maximum per-observation reprojection error in pixels
         """
         total = 0
+        behind_count = 0
         total_sq_err = 0.0
         max_err = 0.0
 
@@ -143,33 +152,49 @@ class TestColmapAlignment(unittest.TestCase):
                 u_p, v_p, zc = _project(
                     R, t, self.fx, self.fy, self.cx, self.cy, X, Y, Z
                 )
-                self.assertIsNotNone(
-                    u_p,
-                    msg="Point {} (X={:.2f} Y={:.2f} Z={:.2f}) is behind "
-                        "its associated camera (z_cam={:.3f}). "
-                        "This indicates a sign error in points3D.txt.".format(
-                            pid, X, Y, Z, zc),
-                )
-                err = math.sqrt((u_obs - u_p) ** 2 + (v_obs - v_p) ** 2)
                 total += 1
+                if zc <= 0.0:
+                    behind_count += 1
+                    continue
+                err = math.sqrt((u_obs - u_p) ** 2 + (v_obs - v_p) ** 2)
                 total_sq_err += err * err
                 if err > max_err:
                     max_err = err
 
-        self.assertGreater(total, 0, "No observations were checked.")
-        mean_err = math.sqrt(total_sq_err / total)
+        visible = total - behind_count
+        rms_err = math.sqrt(total_sq_err / visible) if visible > 0 else float("inf")
+        return {
+            "total": total,
+            "behind_count": behind_count,
+            "rms_err": rms_err,
+            "max_err": max_err,
+        }
+
+    # ------------------------------------------------------------------
+
+    def test_reprojection_error_is_zero(self):
+        """
+        Every (point3D_id, 2D-observation) pair must reproject to within
+        0.1 px (RMS) of the stored observation using the COLMAP camera
+        extrinsics.
+
+        A large RMS error (>> 1 px) indicates a world-coordinate sign
+        mismatch between points3D.txt and images.txt (the original bug).
+        """
+        stats = self._compute_projection_stats()
+        self.assertGreater(stats["total"], 0, "No observations were checked.")
         self.assertLess(
-            mean_err,
+            stats["rms_err"],
             0.1,
-            msg="Mean reprojection error is {:.4f} px (threshold 0.1 px). "
+            msg="RMS reprojection error is {:.4f} px (threshold 0.1 px). "
                 "Large errors indicate a Y/Z sign mismatch in points3D.txt.".format(
-                    mean_err),
+                    stats["rms_err"]),
         )
         self.assertLess(
-            max_err,
+            stats["max_err"],
             0.5,
             msg="Max reprojection error is {:.4f} px (threshold 0.5 px).".format(
-                max_err),
+                stats["max_err"]),
         )
 
     def test_points_in_front_of_cameras(self):
@@ -179,27 +204,14 @@ class TestColmapAlignment(unittest.TestCase):
         Before the fix, negated Y/Z coordinates caused many points to land
         behind the camera (z_cam <= 0) for their assigned observations.
         """
-        behind_count = 0
-        total = 0
-        for cam in self.image_data:
-            R, t = cam["R"], cam["t"]
-            for _u, _v, pid in cam["obs"]:
-                if pid not in self.points:
-                    continue
-                X, Y, Z = self.points[pid]
-                _, _, zc = _project(
-                    R, t, self.fx, self.fy, self.cx, self.cy, X, Y, Z
-                )
-                total += 1
-                if zc <= 0.0:
-                    behind_count += 1
-        self.assertGreater(total, 0)
+        stats = self._compute_projection_stats()
+        self.assertGreater(stats["total"], 0, "No observations were checked.")
         self.assertEqual(
-            behind_count,
+            stats["behind_count"],
             0,
             msg="{}/{} point-observations have z_cam <= 0 (behind camera). "
                 "This is caused by a coordinate sign error in points3D.txt.".format(
-                    behind_count, total),
+                    stats["behind_count"], stats["total"]),
         )
 
     def test_centroid_alignment(self):
@@ -208,17 +220,18 @@ class TestColmapAlignment(unittest.TestCase):
         to the centroid of the camera centres (both representing the same
         scene region).  A large offset signals a coordinate mismatch.
         """
+        self.assertGreater(len(self.image_data), 0, "No cameras were loaded.")
+        self.assertGreater(len(self.points), 0, "No 3D points were loaded.")
+
         # camera centres: c = -R^T t
         cam_cx = cam_cy = cam_cz = 0.0
-        n_cams = 0
         for cam in self.image_data:
             R, t = cam["R"], cam["t"]
             # c_k = -sum_j R[j][k] * t[j]
-            cx = -sum(R[j][0] * t[j] for j in range(3))
-            cy = -sum(R[j][1] * t[j] for j in range(3))
-            cz = -sum(R[j][2] * t[j] for j in range(3))
-            cam_cx += cx; cam_cy += cy; cam_cz += cz
-            n_cams += 1
+            cam_cx += -sum(R[j][0] * t[j] for j in range(3))
+            cam_cy += -sum(R[j][1] * t[j] for j in range(3))
+            cam_cz += -sum(R[j][2] * t[j] for j in range(3))
+        n_cams = len(self.image_data)
         cam_cx /= n_cams; cam_cy /= n_cams; cam_cz /= n_cams
 
         pts = list(self.points.values())
@@ -226,18 +239,19 @@ class TestColmapAlignment(unittest.TestCase):
         pt_cy = sum(p[1] for p in pts) / len(pts)
         pt_cz = sum(p[2] for p in pts) / len(pts)
 
-        # Measure the radius of the camera sphere (approx)
+        # Measure the mean radius of the camera sphere (approx)
         cam_radii = []
         for cam in self.image_data:
             R, t = cam["R"], cam["t"]
             cx = -sum(R[j][0] * t[j] for j in range(3))
             cy = -sum(R[j][1] * t[j] for j in range(3))
             cz = -sum(R[j][2] * t[j] for j in range(3))
-            cam_radii.append(math.sqrt((cx-cam_cx)**2+(cy-cam_cy)**2+(cz-cam_cz)**2))
+            cam_radii.append(math.sqrt((cx - cam_cx) ** 2 + (cy - cam_cy) ** 2 + (cz - cam_cz) ** 2))
+        self.assertGreater(len(cam_radii), 0, "Camera radii could not be computed.")
         radius = sum(cam_radii) / len(cam_radii)
 
         offset = math.sqrt(
-            (cam_cx - pt_cx)**2 + (cam_cy - pt_cy)**2 + (cam_cz - pt_cz)**2
+            (cam_cx - pt_cx) ** 2 + (cam_cy - pt_cy) ** 2 + (cam_cz - pt_cz) ** 2
         )
         # The point-cloud centroid may differ from the camera-sphere centre by
         # up to half the sphere radius (object is not necessarily centred exactly
