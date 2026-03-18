@@ -353,6 +353,8 @@ def _sample_on_triangle(a, b, c):
 
 
 def _collect_world_triangles(root_obj):
+    # _iter_cache_hierarchy already yields root_obj, its deform/render caches,
+    # and all descendant objects via _iter_hierarchy — no separate child walk needed.
     triangles = []
     for obj in _iter_cache_hierarchy(root_obj):
         if obj.CheckType(c4d.Opolygon):
@@ -364,11 +366,6 @@ def _collect_world_triangles(root_obj):
                     triangles.append((wpts[poly.a], wpts[poly.b], wpts[poly.c]))
                     if poly.c != poly.d:
                         triangles.append((wpts[poly.a], wpts[poly.c], wpts[poly.d]))
-    child = root_obj.GetDown()
-    while child:
-        for t in _collect_world_triangles(child):
-            triangles.append(t)
-        child = child.GetNext()
     return triangles
 
 
@@ -717,7 +714,7 @@ def export_colmap(settings, world_points, target_pos, output_dir,
             f.write("\n".join(debug) + "\n")
         raise ValueError(
             "No sparse point had >= 2 observations. "
-            "Increase camera count or use a smaller sparse_radius_factor. "
+            "Try increasing the camera count, the sphere radius, or the sparse point count. "
             "Debug report: {}".format(report)
         )
 
@@ -1298,6 +1295,11 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         s.spiral_pole_margin = max(0.0, min(0.49, float(self.GetFloat(_IDs.SPIRAL_POLE))))
 
         s.output_path = self.GetString(_IDs.OUTPUT_PATH).strip()
+        # When the user types a bare directory path (trailing separator), automatically
+        # append the gs_#### filename pattern — identical to what Browse… does.
+        if s.output_path and "####" not in s.output_path and s.output_path[-1] in ("/", "\\"):
+            s.output_path = os.path.join(s.output_path.rstrip("/\\"), "gs_####")
+            self.SetString(_IDs.OUTPUT_PATH, s.output_path)
         s.output_format = int(self.GetInt32(_IDs.OUTPUT_FORMAT))
         s.res_x = max(1, int(self.GetInt32(_IDs.RES_X)))
         s.res_y = max(1, int(self.GetInt32(_IDs.RES_Y)))

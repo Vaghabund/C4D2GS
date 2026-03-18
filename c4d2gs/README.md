@@ -38,8 +38,11 @@ Gaussian Splatting.  It automates the whole capture-rig pipeline:
    is linked (it is pre-filled from the active selection).
 5. Click **Auto-Fit Radius** to compute a good sphere radius from the object's
    bounding box.
-6. Set your **Output Folder** on the *Output* tab (e.g. `C:\renders\my_splat\`).
-   The plugin appends `gs_####` to form the per-frame filename pattern.
+6. Set your **Output Folder** on the *Output* tab.  Type the full path including
+   the filename pattern, e.g. `C:\renders\my_splat\gs_####`.  The `####` token
+   is replaced by the zero-padded frame number for each image.  If you end the
+   path with a directory separator (e.g. `C:\renders\my_splat\`), the plugin
+   automatically appends `gs_####` for you — identical to clicking **Browse…**.
 7. Click **Build & Export**.
 8. Render the animation in Cinema 4D (`Render ▸ Render to Picture Viewer`, or
    use the Command Line Renderer for batch rendering).
