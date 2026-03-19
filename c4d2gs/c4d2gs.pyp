@@ -878,7 +878,7 @@ def export_colmap(settings, world_points, target_pos, output_dir,
     for i, world_pos in enumerate(world_points):
         mg = look_at_matrix(world_pos, target_pos)
         q, t, r_w2c = c2w_to_colmap_extrinsics(mg)
-        image_name = os.path.relpath(_frame_image_path(settings, i), output_dir).replace("\\", "/")
+        image_name = os.path.basename(_frame_image_path(settings, i))
         image_entries.append({
             "image_id": i + 1,
             "name": image_name,
