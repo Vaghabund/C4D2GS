@@ -52,6 +52,8 @@ PERSIST_KEY_JSON = 1
 NUMERIC_CLEAN_EPS = 1e-10
 MAX_TRACK_OBS_PER_POINT = 12
 RS_CAMERA_TYPE_ID = 1057516   # Redshift RSCamera plugin object type
+# Poisson Disk mode falls back to Fibonacci above this count to avoid O(n²) hang.
+POISSON_SPHERE_CAP = 500
 
 
 def show_error_dialog(code, summary, details=None):
@@ -70,7 +72,13 @@ _DEFAULTS = dict(
     center_y=0.0,
     center_z=0.0,
     center_mode=0,             # 0=geometry center, 1=axis/pivot center
-    sampling_mode=0,           # 0=spiral, 1=icosphere, 2=fibonacci
+    array_pattern=0,           # 0=sphere, 1=cylinder, 2=grid, 3=vertex
+    array_direction=0,         # 0=inward, 1=outward, 2=tangential
+    cylinder_height=400.0,
+    grid_size_x=3,
+    grid_size_y=3,
+    grid_spacing=200.0,
+    sampling_mode=0,           # 0=spiral, 1=icosphere, 2=fibonacci, 3=halton, 4=poisson
     spiral_turns=6.0,
     spiral_pole_margin=0.06,
     output_path=os.path.join(os.path.expanduser("~"), "Documents",
@@ -94,6 +102,9 @@ _DEFAULTS = dict(
     sparse_count=30000,
     sparse_radius_factor=0.35,
     camera_type=0,             # 0=Standard C4D camera, 1=Redshift RSCamera
+    create_takes=False,
+    focal_length_mm=35.0,
+    sync_focal_length=False,
 )
 
 
@@ -115,8 +126,18 @@ class Settings:
     # ------------------------------------------------------------------
 
     def sampling_mode_name(self):
-        return {0: "spiral", 1: "icosphere", 2: "fibonacci"}.get(
+        return {0: "spiral", 1: "icosphere", 2: "fibonacci", 3: "halton", 4: "poisson"}.get(
             self.sampling_mode, "spiral"
+        )
+
+    def array_pattern_name(self):
+        return {0: "sphere", 1: "cylinder", 2: "grid", 3: "vertex"}.get(
+            int(getattr(self, "array_pattern", 0)), "sphere"
+        )
+
+    def array_direction_name(self):
+        return {0: "inward", 1: "outward", 2: "tangential"}.get(
+            int(getattr(self, "array_direction", 0)), "inward"
         )
 
     def output_folder(self):
@@ -692,7 +713,238 @@ def generate_unit_points(settings):
         return pts, "icosphere", subdiv
     if mode == 2:
         return fibonacci_sphere_points(count), "fibonacci", 0
+    if mode == 3:
+        return halton_sphere_points(count), "halton", 0
+    if mode == 4:
+        return poisson_sphere_points(count), "poisson", 0
     return spiral_sphere_points(count, settings.spiral_turns, settings.spiral_pole_margin), "spiral", 0
+
+
+def halton_sphere_points(count):
+    """Halton low-discrepancy sequence mapped onto the unit sphere."""
+    if count <= 0:
+        return []
+
+    def _halton(index, base):
+        result, f = 0.0, 1.0 / base
+        i = index
+        while i > 0:
+            result += f * (i % base)
+            i //= base
+            f /= base
+        return result
+
+    pts = []
+    for i in range(count):
+        u = _halton(i + 1, 2)
+        v = _halton(i + 1, 3)
+        theta = 2.0 * math.pi * u
+        phi = math.acos(max(-1.0, min(1.0, 2.0 * v - 1.0)))
+        pts.append(c4d.Vector(
+            math.sin(phi) * math.cos(theta),
+            math.cos(phi),
+            math.sin(phi) * math.sin(theta),
+        ))
+    return pts
+
+
+def poisson_sphere_points(count):
+    """Poisson-disk-inspired distribution on the unit sphere.
+
+    Uses a rejection approach with golden-spiral candidates; falls back to
+    plain Fibonacci when no valid candidate is found in ``max_attempts``
+    tries.
+
+    For large counts (> ``POISSON_SPHERE_CAP``), the function automatically
+    falls back to Fibonacci to avoid quadratic O(n²) distance-checking time
+    that could freeze Cinema 4D.
+    """
+    if count > POISSON_SPHERE_CAP:
+        return fibonacci_sphere_points(count)
+
+    if count <= 0:
+        return []
+    if count == 1:
+        return [c4d.Vector(0, 1, 0)]
+
+    min_dist = 2.0 / math.sqrt(float(max(1, count)))
+    golden_angle = math.pi * (3.0 - math.sqrt(5.0))
+    max_attempts = 30
+
+    pts = [c4d.Vector(0, 1, 0)]
+
+    while len(pts) < count:
+        placed = False
+        for attempt in range(max_attempts):
+            idx = len(pts) * max_attempts + attempt
+            y = 1.0 - (2.0 * idx) / float(max(1, count * max_attempts - 1))
+            ring_r = math.sqrt(max(0.0, 1.0 - y * y))
+            theta = golden_angle * idx
+            candidate = c4d.Vector(math.sin(theta) * ring_r, y, math.cos(theta) * ring_r)
+            if all((candidate - ex).GetLength() >= min_dist for ex in pts):
+                pts.append(candidate)
+                placed = True
+                break
+        if not placed:
+            i = len(pts)
+            y = 1.0 - (2.0 * i) / float(max(1, count - 1))
+            ring_r = math.sqrt(max(0.0, 1.0 - y * y))
+            theta = golden_angle * i
+            pts.append(c4d.Vector(math.sin(theta) * ring_r, y, math.cos(theta) * ring_r))
+
+    return pts[:count]
+
+
+def cylinder_world_points(settings, center):
+    """Cameras arranged in a cylindrical formation around *center*.
+
+    Cameras are placed at three alternating height levels (-h/6, 0, +h/6)
+    as the angular position advances, giving better vertical coverage than a
+    single ring would provide.
+    """
+    count = max(1, int(settings.camera_count))
+    radius = max(0.001, float(settings.sphere_radius))
+    height = float(getattr(settings, "cylinder_height", 400.0))
+    pts = []
+    for i in range(count):
+        angle = (float(i) / float(count)) * 2.0 * math.pi
+        # Cycle through three height offsets: bottom, mid, top (-h/6, 0, +h/6)
+        h_offset = ((i % 3) - 1) * height / 6.0
+        pts.append(center + c4d.Vector(
+            math.cos(angle) * radius,
+            h_offset,
+            math.sin(angle) * radius,
+        ))
+    return pts
+
+
+def grid_world_points(settings, center):
+    """Cameras arranged in a rectangular grid facing the *center* direction.
+
+    ``settings.sphere_radius`` is used as the distance (depth) from *center*
+    at which the grid plane is placed.  It is intentionally reused so the
+    existing Radius UI control serves as the grid depth.
+    """
+    size_x = max(1, int(getattr(settings, "grid_size_x", 3)))
+    size_y = max(1, int(getattr(settings, "grid_size_y", 3)))
+    spacing = max(0.1, float(getattr(settings, "grid_spacing", 200.0)))
+    dist = max(0.1, float(settings.sphere_radius))
+    pts = []
+    for xi in range(size_x):
+        for yi in range(size_y):
+            px = (xi - (size_x - 1) / 2.0) * spacing
+            py = (yi - (size_y - 1) / 2.0) * spacing
+            pts.append(center + c4d.Vector(px, py, dist))
+    return pts
+
+
+def vertex_world_points(target_obj):
+    """World-space positions of *target_obj*'s polygon vertices.
+
+    Walks the entire cache hierarchy and accumulates vertices from **all**
+    ``Opolygon`` nodes found, so complex generators that produce multiple
+    polygon caches (e.g. cloners, booleans) contribute all their vertices.
+    Returns an empty list when no polygon data is available.
+    """
+    if target_obj is None:
+        return []
+    all_pts = []
+    for node in _iter_cache_hierarchy(target_obj):
+        if node.CheckType(c4d.Opolygon):
+            mg = node.GetMg()
+            pts = node.GetAllPoints()
+            if pts:
+                all_pts.extend(p * mg for p in pts)
+    return all_pts
+
+
+def compute_look_target(cam_pos, target_pos, direction_mode):
+    """Return the world-space look-at target for a camera.
+
+    direction_mode:
+        0 – Inward   : camera looks toward *target_pos*
+        1 – Outward  : camera looks away from *target_pos*
+        2 – Tangential: camera looks along the sphere tangent (horizontal)
+    """
+    if direction_mode == 1:  # Outward
+        diff = cam_pos - target_pos
+        if diff.GetLength() < 1e-6:
+            diff = c4d.Vector(0, 0, 1)
+        return cam_pos + _normalize(diff)
+    if direction_mode == 2:  # Tangential
+        radial = cam_pos - target_pos
+        if radial.GetLength() < 1e-6:
+            return cam_pos + c4d.Vector(1, 0, 0)
+        radial_n = _normalize(radial)
+        up = c4d.Vector(0, 1, 0)
+        if abs(_dot(radial_n, up)) > 0.999:
+            up = c4d.Vector(1, 0, 0)
+        tangent = _normalize(_cross(up, radial_n))
+        return cam_pos + tangent
+    # Inward (0) or default
+    return target_pos
+
+
+def generate_camera_world_poses(settings, target_pos, doc, target_obj):
+    """Compute all camera world positions and per-camera look targets.
+
+    Returns ``(world_pts, look_targets, mode_name, mode_extra)``.
+
+    *mode_name* is a short string describing the array/distribution used.
+    *mode_extra* carries optional secondary info (e.g. icosphere subdivisions).
+    """
+    pattern = int(getattr(settings, "array_pattern", 0))
+    direction = int(getattr(settings, "array_direction", 0))
+    mode_extra = 0
+
+    if pattern == 1:  # Cylinder
+        world_pts = cylinder_world_points(settings, target_pos)
+        mode_name = "cylinder"
+    elif pattern == 2:  # Grid
+        world_pts = grid_world_points(settings, target_pos)
+        mode_name = "grid"
+    elif pattern == 3:  # Vertex
+        world_pts = vertex_world_points(target_obj)
+        mode_name = "vertex"
+        if not world_pts:
+            raise ValueError(
+                "Vertex mode: the target object has no polygon vertices. "
+                "Please select a polygon object as the target. "
+                "Parametric objects are supported when Cinema 4D has already "
+                "built a polygon cache for them."
+            )
+    else:  # Sphere (0) or unknown
+        unit_pts, mode_name, mode_extra = generate_unit_points(settings)
+        world_pts = [target_pos + p * settings.sphere_radius for p in unit_pts]
+
+    look_targets = [compute_look_target(wp, target_pos, direction) for wp in world_pts]
+    return world_pts, look_targets, mode_name, mode_extra
+
+
+def _sync_cameras_focal_length(cameras, focal_length_mm):
+    """Set the focal length on every camera in *cameras*."""
+    focus_pid = getattr(c4d, "CAMERA_FOCUS", None)
+    if focus_pid is None:
+        return
+    for cam in cameras:
+        try:
+            cam[focus_pid] = float(focal_length_mm)
+        except Exception:
+            pass
+
+
+def _add_cameras_to_takes(doc, cameras):
+    """Create one Take per camera and assign the camera to it."""
+    take_data = doc.GetTakeData()
+    if take_data is None:
+        return
+    main_take = take_data.GetMainTake()
+    if main_take is None:
+        return
+    for cam in cameras:
+        take = take_data.AddTake(cam.GetName(), main_take, None)
+        if take is not None:
+            take.SetCamera(take_data, cam)
 
 
 # ---------------------------------------------------------------------------
@@ -774,7 +1026,8 @@ def _normalize_path(path):
 # Export: camera poses JSON
 # ---------------------------------------------------------------------------
 
-def export_camera_poses_json(settings, world_points, target_pos, render_cam=None):
+def export_camera_poses_json(settings, world_points, target_pos, render_cam=None,
+                             look_targets=None):
     if not world_points:
         return None
     intrinsics = get_colmap_intrinsics(settings, render_cam)
@@ -784,7 +1037,8 @@ def export_camera_poses_json(settings, world_points, target_pos, render_cam=None
 
     frames = []
     for i, world_pos in enumerate(world_points):
-        mg = look_at_matrix(world_pos, target_pos)
+        look_t = look_targets[i] if look_targets and i < len(look_targets) else target_pos
+        mg = look_at_matrix(world_pos, look_t)
         hpb = c4d.utils.MatrixToHPB(mg)
         frames.append({
             "frame": i,
@@ -838,7 +1092,7 @@ def _write_cameras_txt(path, intrinsics, res_x, res_y):
 
 
 def export_colmap(settings, world_points, target_pos, output_dir,
-                  render_cam=None, doc=None, target_obj=None):
+                  render_cam=None, doc=None, target_obj=None, look_targets=None):
     """Write cameras.txt / images.txt / points3D.txt for Postshot."""
     if not world_points:
         return None
@@ -876,7 +1130,8 @@ def export_colmap(settings, world_points, target_pos, output_dir,
     # Build image entries with look-at poses
     image_entries = []
     for i, world_pos in enumerate(world_points):
-        mg = look_at_matrix(world_pos, target_pos)
+        look_t = look_targets[i] if look_targets and i < len(look_targets) else target_pos
+        mg = look_at_matrix(world_pos, look_t)
         q, t, r_w2c = c2w_to_colmap_extrinsics(mg)
         image_name = os.path.basename(_frame_image_path(settings, i))
         image_entries.append({
@@ -1019,7 +1274,14 @@ def _is_camera_obj(obj):
     return obj.CheckType(c4d.Ocamera) or obj.CheckType(RS_CAMERA_TYPE_ID)
 
 
-def _set_focus_distance_to_target(cam, target_pos):
+def _set_focus_distance_to_target(cam, target_pos, has_target_tag=True):
+    """Set the camera focus distance to the distance from *cam* to *target_pos*.
+
+    *has_target_tag* controls whether the "Use Target Object" DOF toggle is
+    also enabled.  Pass ``False`` for cameras that do not have a target
+    expression tag (e.g. outward/tangential cameras) so the DOF target-link
+    toggle is not left in a broken state.
+    """
     if cam is None or target_pos is None:
         return
     try:
@@ -1044,6 +1306,9 @@ def _set_focus_distance_to_target(cam, target_pos):
             break
         except Exception:
             continue
+
+    if not has_target_tag:
+        return
 
     # Enable the "Use Target Object" checkbox so focus tracks the target tag.
     # Parameter name varies across C4D versions; try all known candidates.
@@ -1124,21 +1389,44 @@ def run_pipeline(doc, settings, target_obj):
         target_null.SetAbsPos(target_pos)
         doc.AddUndo(c4d.UNDOTYPE_NEWOBJ, target_null)
 
-        # Generate view-point positions
-        unit_pts, mode_used, mode_extra = generate_unit_points(settings)
-        world_pts = [target_pos + p * settings.sphere_radius for p in unit_pts]
+        # Generate camera positions + per-camera look targets
+        world_pts, look_targets, mode_used, mode_extra = generate_camera_world_poses(
+            settings, target_pos, doc, target_obj
+        )
+
+        direction = int(getattr(settings, "array_direction", 0))
 
         # Static reference cameras (one per viewpoint)
-        for i, wpos in enumerate(world_pts):
+        static_cams = []
+        for i, (wpos, look_t) in enumerate(zip(world_pts, look_targets)):
             cam = _make_camera_object(settings.camera_type)
             cam.SetName("GS_Cam_{:04d}".format(i + 1))
             cam.InsertUnder(rig)
-            cam.SetAbsPos(wpos)
-            _create_target_tag(cam, target_null)
-            _set_focus_distance_to_target(cam, target_pos)
+            if direction == 0:
+                # Inward: use a target expression tag so the camera always
+                # points at target_null even when the rig is moved later.
+                cam.SetAbsPos(wpos)
+                _create_target_tag(cam, target_null)
+                _set_focus_distance_to_target(cam, target_pos, has_target_tag=True)
+            else:
+                # Outward / Tangential: bake orientation directly into matrix.
+                cam.SetMg(look_at_matrix(wpos, look_t))
+                # No target tag — do not enable DOF "use target" toggle.
+                _set_focus_distance_to_target(cam, target_pos, has_target_tag=False)
             doc.AddUndo(c4d.UNDOTYPE_NEWOBJ, cam)
+            static_cams.append(cam)
 
-        # Animated render camera
+        # Focal length sync across all static cameras
+        if getattr(settings, "sync_focal_length", False):
+            _sync_cameras_focal_length(
+                static_cams, float(getattr(settings, "focal_length_mm", 35.0))
+            )
+
+        # Take system integration
+        if getattr(settings, "create_takes", False):
+            _add_cameras_to_takes(doc, static_cams)
+
+        # Animated render camera (always inward toward target_null)
         render_cam = None
         if settings.create_anim_cam:
             render_cam = _make_camera_object(settings.camera_type)
@@ -1174,7 +1462,10 @@ def run_pipeline(doc, settings, target_obj):
         pose_file = None
         if settings.export_json:
             try:
-                pose_file = export_camera_poses_json(settings, world_pts, target_pos, render_cam)
+                pose_file = export_camera_poses_json(
+                    settings, world_pts, target_pos, render_cam,
+                    look_targets=look_targets,
+                )
             except Exception as e:
                 pose_file = "ERROR: {}".format(e)
 
@@ -1185,6 +1476,7 @@ def run_pipeline(doc, settings, target_obj):
             colmap_result = export_colmap(
                 settings, world_pts, target_pos, colmap_dir,
                 render_cam=render_cam, doc=doc, target_obj=target_obj,
+                look_targets=look_targets,
             )
 
         doc.SetTime(c4d.BaseTime(0, settings.fps))
@@ -1217,8 +1509,9 @@ def run_colmap_only(doc, settings, target_obj):
     target_pos = object_center_for_mode(
         target_obj, getattr(settings, "center_mode", 0)
     ) + center_offset_for_mode(settings)
-    unit_pts, mode_used, mode_extra = generate_unit_points(settings)
-    world_pts = [target_pos + p * settings.sphere_radius for p in unit_pts]
+    world_pts, look_targets, mode_used, mode_extra = generate_camera_world_poses(
+        settings, target_pos, doc, target_obj
+    )
 
     # Try to find existing render camera
     render_cam = None
@@ -1243,6 +1536,7 @@ def run_colmap_only(doc, settings, target_obj):
     colmap_result = export_colmap(
         settings, world_pts, target_pos, colmap_dir,
         render_cam=render_cam, doc=doc, target_obj=target_obj,
+        look_targets=look_targets,
     )
     return colmap_result
 
@@ -1265,6 +1559,16 @@ class _IDs:
     SPIRAL_TURNS = 1026
     SPIRAL_POLE = 1027
     CENTER_MODE = 1028
+
+    # Camera — array pattern / direction / extra params
+    ARRAY_PATTERN = 1060
+    ARRAY_DIRECTION = 1061
+    CYLINDER_HEIGHT = 1062
+    GRID_SIZE_X = 1063
+    GRID_SIZE_Y = 1064
+    GRID_SPACING = 1065
+    FOCAL_LENGTH_MM = 1067
+    SYNC_FOCAL_LENGTH = 1068
 
     # Tab: Output
     OUTPUT_PATH = 1030
@@ -1289,6 +1593,7 @@ class _IDs:
     CY = 1051
     SPARSE_COUNT = 1052
     CAMERA_TYPE = 1055
+    CREATE_TAKES = 1066
 
     # Action buttons
     BTN_CREATE_RIG = 1089
@@ -1311,6 +1616,8 @@ class _IDs:
     GRP_JSON_PATH_ROW = 2013
     GRP_RES = 2014
     GRP_INTRINSICS = 2015
+    GRP_ARRAY = 2016
+    GRP_TAKES = 2017
 
 
 # ---------------------------------------------------------------------------
@@ -1379,9 +1686,38 @@ class C4D2GSDialog(c4d.gui.GeDialog):
                         cols=1, title="Camera", groupflags=c4d.BORDER_GROUP_IN)
         self.GroupBorderSpace(6, 6, 6, 6)
 
-        # Sphere section
+        # Array Pattern section
+        self.GroupBegin(_IDs.GRP_ARRAY, c4d.BFH_SCALEFIT, cols=2,
+                        title="Array Pattern", groupflags=c4d.BORDER_GROUP_IN)
+        self.GroupBorderSpace(6, 4, 6, 4)
+
+        self.AddStaticText(3100, c4d.BFH_LEFT, name="Pattern")
+        self.AddComboBox(_IDs.ARRAY_PATTERN, c4d.BFH_SCALEFIT)
+        for pid, label in [(0, "Sphere"), (1, "Cylinder"), (2, "Grid"), (3, "Vertex")]:
+            self.AddChild(_IDs.ARRAY_PATTERN, pid, label)
+
+        self.AddStaticText(3101, c4d.BFH_LEFT, name="Direction")
+        self.AddComboBox(_IDs.ARRAY_DIRECTION, c4d.BFH_SCALEFIT)
+        for did, label in [(0, "Inward"), (1, "Outward"), (2, "Tangential")]:
+            self.AddChild(_IDs.ARRAY_DIRECTION, did, label)
+
+        self.AddStaticText(3102, c4d.BFH_LEFT, name="Cylinder Height")
+        self.AddEditNumberArrows(_IDs.CYLINDER_HEIGHT, c4d.BFH_SCALEFIT)
+
+        self.AddStaticText(3103, c4d.BFH_LEFT, name="Grid Size X")
+        self.AddEditNumberArrows(_IDs.GRID_SIZE_X, c4d.BFH_SCALEFIT)
+
+        self.AddStaticText(3104, c4d.BFH_LEFT, name="Grid Size Y")
+        self.AddEditNumberArrows(_IDs.GRID_SIZE_Y, c4d.BFH_SCALEFIT)
+
+        self.AddStaticText(3105, c4d.BFH_LEFT, name="Grid Spacing")
+        self.AddEditNumberArrows(_IDs.GRID_SPACING, c4d.BFH_SCALEFIT)
+
+        self.GroupEnd()
+
+        # Sphere / Array Settings section
         self.GroupBegin(_IDs.GRP_SPHERE, c4d.BFH_SCALEFIT, cols=2,
-                        title="Sphere", groupflags=c4d.BORDER_GROUP_IN)
+                        title="Array Settings", groupflags=c4d.BORDER_GROUP_IN)
         self.GroupBorderSpace(6, 4, 6, 4)
 
         self.AddStaticText(3000, c4d.BFH_LEFT, name="Camera Count")
@@ -1408,16 +1744,24 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self.AddComboBox(_IDs.CAMERA_TYPE, c4d.BFH_SCALEFIT)
         self.AddChild(_IDs.CAMERA_TYPE, 0, "Standard")
         self.AddChild(_IDs.CAMERA_TYPE, 1, "Redshift RSCamera")
+
+        self.AddStaticText(3106, c4d.BFH_LEFT, name="Focal Length (mm)")
+        self.AddEditNumberArrows(_IDs.FOCAL_LENGTH_MM, c4d.BFH_SCALEFIT)
+
+        self.AddStaticText(3107, c4d.BFH_LEFT, name="Sync Focal Length")
+        self.AddCheckbox(_IDs.SYNC_FOCAL_LENGTH, c4d.BFH_LEFT, 0, 0, name="")
+
         self.GroupEnd()
 
         # Distribution section
         self.GroupBegin(_IDs.GRP_DIST, c4d.BFH_SCALEFIT, cols=2,
-                        title="Distribution", groupflags=c4d.BORDER_GROUP_IN)
+                        title="Distribution (Sphere only)", groupflags=c4d.BORDER_GROUP_IN)
         self.GroupBorderSpace(6, 4, 6, 4)
 
         self.AddStaticText(3010, c4d.BFH_LEFT, name="Sampling Mode")
         self.AddComboBox(_IDs.SAMPLING_MODE, c4d.BFH_SCALEFIT)
-        for mode_id, label in [(0, "Spiral"), (1, "Icosphere"), (2, "Fibonacci")]:
+        for mode_id, label in [(0, "Spiral"), (1, "Icosphere"), (2, "Fibonacci"),
+                               (3, "Halton"), (4, "Poisson Disk")]:
             self.AddChild(_IDs.SAMPLING_MODE, mode_id, label)
 
         self.AddStaticText(3011, c4d.BFH_LEFT, name="Spiral Turns")
@@ -1497,6 +1841,14 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self.AddCheckbox(_IDs.AUTO_UPDATE_RIG, c4d.BFH_LEFT, 0, 0, name="")
         self.GroupEnd()
 
+        # Take system
+        self.GroupBegin(_IDs.GRP_TAKES, c4d.BFH_SCALEFIT, cols=2,
+                        title="Take System", groupflags=c4d.BORDER_GROUP_IN)
+        self.GroupBorderSpace(6, 4, 6, 4)
+        self.AddStaticText(3108, c4d.BFH_LEFT, name="Add Cameras to Takes")
+        self.AddCheckbox(_IDs.CREATE_TAKES, c4d.BFH_LEFT, 0, 0, name="")
+        self.GroupEnd()
+
         # Camera pose JSON
         self.GroupBegin(2041, c4d.BFH_SCALEFIT, cols=2,
                         title="Camera Pose JSON", groupflags=c4d.BORDER_GROUP_IN)
@@ -1558,7 +1910,15 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         if self._target_obj is not None:
             self._set_link_target(self._target_obj)
 
-        # Camera tab
+        # Camera tab — array pattern / direction
+        self.SetInt32(_IDs.ARRAY_PATTERN, int(getattr(s, "array_pattern", 0)))
+        self.SetInt32(_IDs.ARRAY_DIRECTION, int(getattr(s, "array_direction", 0)))
+        self._sf(_IDs.CYLINDER_HEIGHT, getattr(s, "cylinder_height", 400.0), 0.1, 1e6, 1.0)
+        self._si(_IDs.GRID_SIZE_X, int(getattr(s, "grid_size_x", 3)), 1, 10000)
+        self._si(_IDs.GRID_SIZE_Y, int(getattr(s, "grid_size_y", 3)), 1, 10000)
+        self._sf(_IDs.GRID_SPACING, getattr(s, "grid_spacing", 200.0), 0.1, 1e6, 1.0)
+
+        # Camera tab — array settings
         self._si(_IDs.CAM_COUNT, s.camera_count, 1, 100000)
         s.sphere_radius = max(RADIUS_MIN, min(RADIUS_MAX, float(s.sphere_radius)))
         self._sf(_IDs.RADIUS, s.sphere_radius, RADIUS_MIN, RADIUS_MAX, 1.0)
@@ -1567,6 +1927,10 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self._sf(_IDs.CENTER_Z, s.center_z, -1e9, 1e9, 1.0)
         self.SetInt32(_IDs.CENTER_MODE, int(getattr(s, "center_mode", 0)))
         self.SetInt32(_IDs.CAMERA_TYPE, int(getattr(s, "camera_type", 0)))
+        self._sf(_IDs.FOCAL_LENGTH_MM, float(getattr(s, "focal_length_mm", 35.0)), 0.1, 10000.0, 0.5)
+        self.SetBool(_IDs.SYNC_FOCAL_LENGTH, bool(getattr(s, "sync_focal_length", False)))
+
+        # Camera tab — distribution
         self.SetInt32(_IDs.SAMPLING_MODE, s.sampling_mode)
         self._sf(_IDs.SPIRAL_TURNS, s.spiral_turns, 0.01, 1e6, 0.1)
         self._sf(_IDs.SPIRAL_POLE, s.spiral_pole_margin, 0.0, 0.49, 0.001)
@@ -1582,6 +1946,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self.SetBool(_IDs.CREATE_ANIM_CAM, bool(s.create_anim_cam))
         self.SetBool(_IDs.REPLACE_RIG, bool(s.replace_rig))
         self.SetBool(_IDs.AUTO_UPDATE_RIG, bool(s.auto_update_rig))
+        self.SetBool(_IDs.CREATE_TAKES, bool(getattr(s, "create_takes", False)))
         self.SetBool(_IDs.EXPORT_JSON, bool(s.export_json))
         self.SetBool(_IDs.EXPORT_COLMAP, bool(s.export_colmap))
         self.SetBool(_IDs.AUTO_INTRINSICS, bool(s.auto_intrinsics))
@@ -1591,6 +1956,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self._sf(_IDs.CY, s.cy, -1e9, 1e9, 1.0)
         self._si(_IDs.SPARSE_COUNT, s.sparse_count, 8, 100000)
 
+        self._update_array_pattern_ui()
         self._update_center_offset_ui()
         self._update_intrinsics_ui()
         self._refresh_status()
@@ -1625,6 +1991,15 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         if self._target_obj is not None:
             self._set_link_target(self._target_obj)
 
+        # Array pattern / direction
+        s.array_pattern = int(self.GetInt32(_IDs.ARRAY_PATTERN))
+        s.array_direction = int(self.GetInt32(_IDs.ARRAY_DIRECTION))
+        s.cylinder_height = max(0.1, float(self.GetFloat(_IDs.CYLINDER_HEIGHT)))
+        s.grid_size_x = max(1, int(self.GetInt32(_IDs.GRID_SIZE_X)))
+        s.grid_size_y = max(1, int(self.GetInt32(_IDs.GRID_SIZE_Y)))
+        s.grid_spacing = max(0.1, float(self.GetFloat(_IDs.GRID_SPACING)))
+
+        # Array settings
         s.camera_count = max(1, int(self.GetInt32(_IDs.CAM_COUNT)))
         s.sphere_radius = max(RADIUS_MIN, min(RADIUS_MAX, float(self.GetFloat(_IDs.RADIUS))))
         s.center_x = float(self.GetFloat(_IDs.CENTER_X))
@@ -1632,6 +2007,9 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         s.center_z = float(self.GetFloat(_IDs.CENTER_Z))
         s.center_mode = int(self.GetInt32(_IDs.CENTER_MODE))
         s.camera_type = int(self.GetInt32(_IDs.CAMERA_TYPE))
+        s.focal_length_mm = max(0.1, float(self.GetFloat(_IDs.FOCAL_LENGTH_MM)))
+        s.sync_focal_length = bool(self.GetBool(_IDs.SYNC_FOCAL_LENGTH))
+
         s.sampling_mode = int(self.GetInt32(_IDs.SAMPLING_MODE))
         s.spiral_turns = max(0.01, float(self.GetFloat(_IDs.SPIRAL_TURNS)))
         s.spiral_pole_margin = max(0.0, min(0.49, float(self.GetFloat(_IDs.SPIRAL_POLE))))
@@ -1647,6 +2025,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         s.create_anim_cam = bool(self.GetBool(_IDs.CREATE_ANIM_CAM))
         s.replace_rig = bool(self.GetBool(_IDs.REPLACE_RIG))
         s.auto_update_rig = bool(self.GetBool(_IDs.AUTO_UPDATE_RIG))
+        s.create_takes = bool(self.GetBool(_IDs.CREATE_TAKES))
         s.export_json = bool(self.GetBool(_IDs.EXPORT_JSON))
         s.export_colmap = bool(self.GetBool(_IDs.EXPORT_COLMAP))
         s.auto_intrinsics = bool(self.GetBool(_IDs.AUTO_INTRINSICS))
@@ -1663,7 +2042,9 @@ class C4D2GSDialog(c4d.gui.GeDialog):
     def _refresh_status(self):
         s = self._settings
         name = self._target_obj.GetName() if self._target_obj else "(none)"
-        mode = s.sampling_mode_name()
+        pattern = s.array_pattern_name()
+        direction = s.array_direction_name()
+        mode = s.sampling_mode_name() if int(getattr(s, "array_pattern", 0)) == 0 else pattern
         center_mode = "Geometry" if int(getattr(s, "center_mode", 0)) == 0 else "Axis"
         exports = []
         if s.export_json:
@@ -1672,9 +2053,9 @@ class C4D2GSDialog(c4d.gui.GeDialog):
             exports.append("COLMAP")
         exp_str = " + ".join(exports) if exports else "none"
         status = (
-            "Target: {}  |  Cameras: {}  |  Mode: {}  |  Center: {}  |  "
+            "Target: {}  |  Pattern: {} ({})  |  Mode: {}  |  Center: {}  |  "
             "Res: {}×{}  |  Export: {}"
-        ).format(name, s.camera_count, mode, center_mode, s.res_x, s.res_y, exp_str)
+        ).format(name, pattern, direction, mode, center_mode, s.res_x, s.res_y, exp_str)
         self.SetString(_IDs.STATUS_TEXT, status)
 
     def _try_auto_update_rig(self, cid):
@@ -1721,6 +2102,53 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         for cid in [3002, _IDs.CENTER_X, 3003, _IDs.CENTER_Y, 3004, _IDs.CENTER_Z]:
             try:
                 self.Enable(cid, offsets_enabled)
+            except Exception:
+                pass
+
+    def _update_array_pattern_ui(self):
+        """Enable/disable widgets that depend on the chosen array pattern."""
+        pattern = int(self.GetInt32(_IDs.ARRAY_PATTERN))
+        is_sphere = (pattern == 0)
+        is_cylinder = (pattern == 1)
+        is_grid = (pattern == 2)
+        is_vertex = (pattern == 3)
+
+        # Camera Count: not relevant for vertex (positions come from geometry)
+        # or grid (count is determined by grid_size_x * grid_size_y).
+        count_enabled = not is_vertex and not is_grid
+        for cid in [_IDs.CAM_COUNT]:
+            try:
+                self.Enable(cid, count_enabled)
+            except Exception:
+                pass
+
+        # Radius: used as sphere/cylinder radius and as grid depth, so it is
+        # relevant for sphere, cylinder, and grid; disabled only for vertex.
+        radius_enabled = not is_vertex
+        for cid in [_IDs.RADIUS]:
+            try:
+                self.Enable(cid, radius_enabled)
+            except Exception:
+                pass
+
+        # Cylinder height: only relevant for cylinder
+        for cid in [_IDs.CYLINDER_HEIGHT]:
+            try:
+                self.Enable(cid, is_cylinder)
+            except Exception:
+                pass
+
+        # Grid settings: only relevant for grid
+        for cid in [_IDs.GRID_SIZE_X, _IDs.GRID_SIZE_Y, _IDs.GRID_SPACING]:
+            try:
+                self.Enable(cid, is_grid)
+            except Exception:
+                pass
+
+        # Distribution controls: sphere only
+        for cid in [_IDs.SAMPLING_MODE, _IDs.SPIRAL_TURNS, _IDs.SPIRAL_POLE]:
+            try:
+                self.Enable(cid, is_sphere)
             except Exception:
                 pass
 
@@ -1938,6 +2366,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self._read_ui()
         _save_settings(self._settings)
         self._try_auto_update_rig(cid)
+        self._update_array_pattern_ui()
         self._update_center_offset_ui()
         self._update_intrinsics_ui()
         self._refresh_status()
@@ -1956,8 +2385,6 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         extra_str = ""
         if mode == "icosphere" and extra:
             extra_str = " (subdivisions: {})".format(extra)
-        elif mode == "spiral":
-            extra_str = ""
 
         msg_lines = [
             "Dataset ready for Postshot!",
