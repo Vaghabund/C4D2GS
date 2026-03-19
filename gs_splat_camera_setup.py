@@ -265,6 +265,141 @@ def c2w_to_colmap_extrinsics(mg):
     return (qw, qx, qy, qz), (tx, ty, tz), r_w2c
 
 
+# ---------------------------------------------------------------------------
+# COLMAP import helpers
+# ---------------------------------------------------------------------------
+
+def parse_colmap_cameras_txt(path):
+    """Parse a COLMAP cameras.txt file.
+
+    Returns a dict mapping camera_id (int) to a dict with keys:
+        model, width, height, fx, fy, cx, cy
+
+    Supports SIMPLE_PINHOLE and PINHOLE models; other models are approximated
+    using the first three params as f, cx, cy.
+    """
+    cameras = {}
+    if not os.path.isfile(path):
+        return cameras
+    with open(path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            try:
+                cam_id = int(parts[0])
+                model = parts[1].upper()
+                width = int(parts[2])
+                height = int(parts[3])
+                params = [float(p) for p in parts[4:]]
+            except (ValueError, IndexError):
+                continue
+            if model == "SIMPLE_PINHOLE" and len(params) >= 3:
+                cameras[cam_id] = {
+                    "model": model, "width": width, "height": height,
+                    "fx": params[0], "fy": params[0],
+                    "cx": params[1], "cy": params[2],
+                }
+            elif model in ("PINHOLE", "OPENCV") and len(params) >= 4:
+                cameras[cam_id] = {
+                    "model": model, "width": width, "height": height,
+                    "fx": params[0], "fy": params[1],
+                    "cx": params[2], "cy": params[3],
+                }
+            elif len(params) >= 3:
+                cameras[cam_id] = {
+                    "model": model, "width": width, "height": height,
+                    "fx": params[0], "fy": params[0],
+                    "cx": params[1], "cy": params[2],
+                }
+    return cameras
+
+
+def parse_colmap_images_txt(path):
+    """Parse a COLMAP images.txt file.
+
+    Returns a list of dicts (ordered by appearance), each with keys:
+        image_id, qw, qx, qy, qz, tx, ty, tz, camera_id, name
+    """
+    images = []
+    if not os.path.isfile(path):
+        return images
+    with open(path, "r") as f:
+        raw_lines = [l.rstrip("\n") for l in f]
+    i = 0
+    while i < len(raw_lines):
+        line = raw_lines[i].strip()
+        i += 1
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) < 9:
+            continue
+        try:
+            image_id = int(parts[0])
+            qw = float(parts[1]); qx = float(parts[2])
+            qy = float(parts[3]); qz = float(parts[4])
+            tx = float(parts[5]); ty = float(parts[6]); tz = float(parts[7])
+            camera_id = int(parts[8])
+            name = parts[9] if len(parts) > 9 else ""
+        except (ValueError, IndexError):
+            continue
+        images.append({
+            "image_id": image_id,
+            "qw": qw, "qx": qx, "qy": qy, "qz": qz,
+            "tx": tx, "ty": ty, "tz": tz,
+            "camera_id": camera_id,
+            "name": name,
+        })
+        if i < len(raw_lines):
+            i += 1  # skip the 2D-point observation line
+    return images
+
+
+def colmap_extrinsics_to_c4d_matrix(qw, qx, qy, qz, tx, ty, tz):
+    """Convert COLMAP camera extrinsics to a Cinema 4D camera matrix.
+
+    COLMAP/OpenCV convention: camera space has +X right, +Y down, +Z forward.
+    C4D convention:           camera space has +X right, +Y up,   +Z backward.
+
+    Applies the inverse of S = diag(1, -1, -1):
+      v1 (right)    = row 0 of R_w2c           (X unchanged)
+      v2 (up)       = negated row 1 of R_w2c   (flip down  → up)
+      v3 (backward) = negated row 2 of R_w2c   (flip forward → backward)
+      camera position = -R_w2c^T * t
+    """
+    r = [
+        [1 - 2*(qy**2 + qz**2),  2*(qx*qy - qw*qz),  2*(qx*qz + qw*qy)],
+        [2*(qx*qy + qw*qz),  1 - 2*(qx**2 + qz**2),  2*(qy*qz - qw*qx)],
+        [2*(qx*qz - qw*qy),  2*(qy*qz + qw*qx),  1 - 2*(qx**2 + qy**2)],
+    ]
+    t = (tx, ty, tz)
+    cam_pos = c4d.Vector(
+        -(r[0][0]*t[0] + r[1][0]*t[1] + r[2][0]*t[2]),
+        -(r[0][1]*t[0] + r[1][1]*t[1] + r[2][1]*t[2]),
+        -(r[0][2]*t[0] + r[1][2]*t[1] + r[2][2]*t[2]),
+    )
+    v1 = c4d.Vector( r[0][0],  r[0][1],  r[0][2])
+    v2 = c4d.Vector(-r[1][0], -r[1][1], -r[1][2])
+    v3 = c4d.Vector(-r[2][0], -r[2][1], -r[2][2])
+    mg = c4d.Matrix()
+    mg.off = cam_pos
+    mg.v1 = v1
+    mg.v2 = v2
+    mg.v3 = v3
+    return mg
+
+
+def focal_length_mm_from_intrinsics(fx, width, sensor_width_mm=36.0):
+    """Convert focal length from pixels to millimetres (36 mm sensor default)."""
+    if width <= 0 or fx <= 0:
+        return 35.0
+    return float(fx) * float(sensor_width_mm) / float(width)
+
+
 def world_to_camera_point(r_w2c, t_w2c, world_point):
     x = world_point.x
     y = world_point.y

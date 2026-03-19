@@ -105,6 +105,7 @@ _DEFAULTS = dict(
     create_takes=False,
     focal_length_mm=35.0,
     sync_focal_length=False,
+    colmap_import_path="",
 )
 
 
@@ -1542,6 +1543,306 @@ def run_colmap_only(doc, settings, target_obj):
 
 
 # ---------------------------------------------------------------------------
+# COLMAP import helpers
+# ---------------------------------------------------------------------------
+
+def parse_colmap_cameras_txt(path):
+    """Parse a COLMAP cameras.txt file.
+
+    Returns a dict mapping camera_id (int) to a dict with keys:
+        model, width, height, fx, fy, cx, cy
+
+    Supports SIMPLE_PINHOLE (f, cx, cy) and PINHOLE (fx, fy, cx, cy) models.
+    Other models are approximated using the first three params as f, cx, cy.
+    """
+    cameras = {}
+    if not os.path.isfile(path):
+        return cameras
+    with open(path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            try:
+                cam_id = int(parts[0])
+                model = parts[1].upper()
+                width = int(parts[2])
+                height = int(parts[3])
+                params = [float(p) for p in parts[4:]]
+            except (ValueError, IndexError):
+                continue
+            if model == "SIMPLE_PINHOLE" and len(params) >= 3:
+                cameras[cam_id] = {
+                    "model": model, "width": width, "height": height,
+                    "fx": params[0], "fy": params[0],
+                    "cx": params[1], "cy": params[2],
+                }
+            elif model in ("PINHOLE", "OPENCV") and len(params) >= 4:
+                cameras[cam_id] = {
+                    "model": model, "width": width, "height": height,
+                    "fx": params[0], "fy": params[1],
+                    "cx": params[2], "cy": params[3],
+                }
+            elif len(params) >= 3:
+                # Fallback: treat first param as f, next two as cx, cy.
+                cameras[cam_id] = {
+                    "model": model, "width": width, "height": height,
+                    "fx": params[0], "fy": params[0],
+                    "cx": params[1], "cy": params[2],
+                }
+    return cameras
+
+
+def parse_colmap_images_txt(path):
+    """Parse a COLMAP images.txt file.
+
+    Returns a list of dicts ordered by appearance, each with keys:
+        image_id, qw, qx, qy, qz, tx, ty, tz, camera_id, name
+
+    Lines beginning with '#' and the per-image 2D-point observation lines
+    are skipped automatically.
+    """
+    images = []
+    if not os.path.isfile(path):
+        return images
+    with open(path, "r") as f:
+        raw_lines = [l.rstrip("\n") for l in f]
+    i = 0
+    while i < len(raw_lines):
+        line = raw_lines[i].strip()
+        i += 1
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) < 9:
+            # This is a 2D-point observation line that arrived without a
+            # preceding extrinsics line — skip it.
+            continue
+        try:
+            image_id = int(parts[0])
+            qw = float(parts[1]); qx = float(parts[2])
+            qy = float(parts[3]); qz = float(parts[4])
+            tx = float(parts[5]); ty = float(parts[6]); tz = float(parts[7])
+            camera_id = int(parts[8])
+            name = parts[9] if len(parts) > 9 else ""
+        except (ValueError, IndexError):
+            continue
+        images.append({
+            "image_id": image_id,
+            "qw": qw, "qx": qx, "qy": qy, "qz": qz,
+            "tx": tx, "ty": ty, "tz": tz,
+            "camera_id": camera_id,
+            "name": name,
+        })
+        # Skip the 2D-point observation line that follows every extrinsic line.
+        if i < len(raw_lines):
+            i += 1
+    return images
+
+
+def colmap_extrinsics_to_c4d_matrix(qw, qx, qy, qz, tx, ty, tz):
+    """Convert COLMAP camera extrinsics to a Cinema 4D camera matrix.
+
+    COLMAP/OpenCV convention: camera space has +X right, +Y down, +Z forward.
+    C4D convention:           camera space has +X right, +Y up,   +Z backward
+                              (the camera looks down its local -Z axis).
+
+    The inverse of the S = diag(1, -1, -1) transform used on export is applied:
+      - v1 (right)    = row 0 of R_w2c          (X stays right)
+      - v2 (up)       = negated row 1 of R_w2c  (flip down → up)
+      - v3 (backward) = negated row 2 of R_w2c  (flip forward → backward)
+      - camera position = -R_w2c^T * t
+    """
+    r = [
+        [1 - 2*(qy**2 + qz**2),  2*(qx*qy - qw*qz),  2*(qx*qz + qw*qy)],
+        [2*(qx*qy + qw*qz),  1 - 2*(qx**2 + qz**2),  2*(qy*qz - qw*qx)],
+        [2*(qx*qz - qw*qy),  2*(qy*qz + qw*qx),  1 - 2*(qx**2 + qy**2)],
+    ]
+    t = (tx, ty, tz)
+    # Camera centre in world space: cam_pos = -R_w2c^T * t
+    cam_pos = c4d.Vector(
+        -(r[0][0]*t[0] + r[1][0]*t[1] + r[2][0]*t[2]),
+        -(r[0][1]*t[0] + r[1][1]*t[1] + r[2][1]*t[2]),
+        -(r[0][2]*t[0] + r[1][2]*t[1] + r[2][2]*t[2]),
+    )
+    v1 = c4d.Vector( r[0][0],  r[0][1],  r[0][2])   # right    (X unchanged)
+    v2 = c4d.Vector(-r[1][0], -r[1][1], -r[1][2])   # up       (negate Y)
+    v3 = c4d.Vector(-r[2][0], -r[2][1], -r[2][2])   # backward (negate Z)
+    mg = c4d.Matrix()
+    mg.off = cam_pos
+    mg.v1 = v1
+    mg.v2 = v2
+    mg.v3 = v3
+    return mg
+
+
+def _focal_length_mm_from_intrinsics(fx, width, sensor_width_mm=36.0):
+    """Convert focal length in pixels to millimetres.
+
+    Uses the standard relationship  fl_mm = fx * sensor_w_mm / image_w_px.
+    36 mm is Cinema 4D's default aperture width (full-frame equivalent).
+    """
+    if width <= 0 or fx <= 0:
+        return 35.0
+    return float(fx) * float(sensor_width_mm) / float(width)
+
+
+def import_colmap_cameras(doc, settings, colmap_dir):
+    """Read an existing COLMAP dataset and create matching C4D cameras.
+
+    Parses *cameras.txt* and *images.txt* from *colmap_dir*, converts each
+    camera extrinsic to a Cinema 4D camera matrix (using
+    ``colmap_extrinsics_to_c4d_matrix``), and inserts all cameras into the
+    document under a new null named ``GS_ImportedRig``.  This guarantees
+    that any footage rendered from the imported cameras will be perfectly
+    aligned with the point cloud and Gaussian Splat trained on the same
+    COLMAP dataset.
+
+    An animated render camera that visits every imported viewpoint in
+    frame order is also created when ``settings.create_anim_cam`` is True,
+    making it straightforward to trigger a batch render.
+
+    Returns a summary dict on success; raises ``ValueError`` on failure.
+    """
+    colmap_dir = _normalize_path(colmap_dir)
+    if not colmap_dir or not os.path.isdir(colmap_dir):
+        raise ValueError(
+            "COLMAP input folder not found: '{}'.  "
+            "Set the COLMAP Input Folder field to a directory that "
+            "contains cameras.txt and images.txt.".format(colmap_dir)
+        )
+
+    cameras_txt = os.path.join(colmap_dir, "cameras.txt")
+    images_txt  = os.path.join(colmap_dir, "images.txt")
+    if not os.path.isfile(cameras_txt):
+        raise ValueError("cameras.txt not found in: {}".format(colmap_dir))
+    if not os.path.isfile(images_txt):
+        raise ValueError("images.txt not found in: {}".format(colmap_dir))
+
+    cam_intrinsics = parse_colmap_cameras_txt(cameras_txt)
+    if not cam_intrinsics:
+        raise ValueError("cameras.txt is empty or could not be parsed.")
+
+    image_entries = parse_colmap_images_txt(images_txt)
+    if not image_entries:
+        raise ValueError("images.txt is empty or could not be parsed.")
+
+    # Sort by image_id for a deterministic frame order.
+    image_entries.sort(key=lambda e: e["image_id"])
+
+    doc.StartUndo()
+    try:
+        rig = c4d.BaseObject(c4d.Onull)
+        rig.SetName("GS_ImportedRig")
+        doc.InsertObject(rig)
+        doc.AddUndo(c4d.UNDOTYPE_NEWOBJ, rig)
+
+        focus_pid = getattr(c4d, "CAMERA_FOCUS", None)
+        imported_cams = []
+        for entry in image_entries:
+            intr = cam_intrinsics.get(entry["camera_id"]) or next(iter(cam_intrinsics.values()))
+            mg = colmap_extrinsics_to_c4d_matrix(
+                entry["qw"], entry["qx"], entry["qy"], entry["qz"],
+                entry["tx"], entry["ty"], entry["tz"],
+            )
+            cam = _make_camera_object(settings.camera_type)
+            cam.SetName("GS_Imported_{:04d}".format(entry["image_id"]))
+            cam.SetMg(mg)
+            if focus_pid is not None:
+                try:
+                    cam[focus_pid] = _focal_length_mm_from_intrinsics(intr["fx"], intr["width"])
+                except Exception:
+                    pass
+            cam.InsertUnder(rig)
+            doc.AddUndo(c4d.UNDOTYPE_NEWOBJ, cam)
+            imported_cams.append((entry, cam, intr))
+
+        # Animated render camera —— optional.
+        render_cam = None
+        if settings.create_anim_cam and imported_cams:
+            _, first_cam, first_intr = imported_cams[0]
+            render_cam = _make_camera_object(settings.camera_type)
+            render_cam.SetName("GS_ImportedRenderCam")
+            render_cam.SetMg(first_cam.GetMg())
+            if focus_pid is not None:
+                try:
+                    render_cam[focus_pid] = _focal_length_mm_from_intrinsics(
+                        first_intr["fx"], first_intr["width"]
+                    )
+                except Exception:
+                    pass
+            render_cam.InsertUnder(rig)
+            doc.AddUndo(c4d.UNDOTYPE_NEWOBJ, render_cam)
+
+            fps = settings.fps
+            desc_px = c4d.DescID(
+                c4d.DescLevel(c4d.ID_BASEOBJECT_REL_POSITION, c4d.DTYPE_VECTOR, 0),
+                c4d.DescLevel(c4d.VECTOR_X, c4d.DTYPE_REAL, 0),
+            )
+            desc_py = c4d.DescID(
+                c4d.DescLevel(c4d.ID_BASEOBJECT_REL_POSITION, c4d.DTYPE_VECTOR, 0),
+                c4d.DescLevel(c4d.VECTOR_Y, c4d.DTYPE_REAL, 0),
+            )
+            desc_pz = c4d.DescID(
+                c4d.DescLevel(c4d.ID_BASEOBJECT_REL_POSITION, c4d.DTYPE_VECTOR, 0),
+                c4d.DescLevel(c4d.VECTOR_Z, c4d.DTYPE_REAL, 0),
+            )
+            desc_rx = c4d.DescID(
+                c4d.DescLevel(c4d.ID_BASEOBJECT_REL_ROTATION, c4d.DTYPE_VECTOR, 0),
+                c4d.DescLevel(c4d.VECTOR_X, c4d.DTYPE_REAL, 0),
+            )
+            desc_ry = c4d.DescID(
+                c4d.DescLevel(c4d.ID_BASEOBJECT_REL_ROTATION, c4d.DTYPE_VECTOR, 0),
+                c4d.DescLevel(c4d.VECTOR_Y, c4d.DTYPE_REAL, 0),
+            )
+            desc_rz = c4d.DescID(
+                c4d.DescLevel(c4d.ID_BASEOBJECT_REL_ROTATION, c4d.DTYPE_VECTOR, 0),
+                c4d.DescLevel(c4d.VECTOR_Z, c4d.DTYPE_REAL, 0),
+            )
+            for frame_idx, (_entry, src_cam, _intr) in enumerate(imported_cams):
+                src_mg = src_cam.GetMg()
+                t = c4d.BaseTime(frame_idx, fps)
+                _add_step_key(render_cam, desc_px, t, src_mg.off.x)
+                _add_step_key(render_cam, desc_py, t, src_mg.off.y)
+                _add_step_key(render_cam, desc_pz, t, src_mg.off.z)
+                hpb = c4d.utils.MatrixToHPB(src_mg, c4d.ROTATIONORDER_DEFAULT)
+                _add_step_key(render_cam, desc_rx, t, hpb.x)
+                _add_step_key(render_cam, desc_ry, t, hpb.y)
+                _add_step_key(render_cam, desc_rz, t, hpb.z)
+
+        # Update render settings to match the imported COLMAP intrinsics.
+        if imported_cams:
+            _, _, first_intr = imported_cams[0]
+            rd = doc.GetActiveRenderData()
+            if rd is not None:
+                rd[c4d.RDATA_XRES] = int(first_intr.get("width", settings.res_x))
+                rd[c4d.RDATA_YRES] = int(first_intr.get("height", settings.res_y))
+                rd[c4d.RDATA_FRAMERATE] = settings.fps
+                rd[c4d.RDATA_FRAMESEQUENCE] = c4d.RDATA_FRAMESEQUENCE_ALLFRAMES
+                rd[c4d.RDATA_FRAMEFROM] = c4d.BaseTime(0, settings.fps)
+                rd[c4d.RDATA_FRAMETO] = c4d.BaseTime(
+                    max(0, len(imported_cams) - 1), settings.fps
+                )
+                if render_cam is not None and hasattr(c4d, "RDATA_CAMERA"):
+                    rd[c4d.RDATA_CAMERA] = render_cam
+
+        doc.SetTime(c4d.BaseTime(0, settings.fps))
+        c4d.EventAdd()
+
+        return {
+            "camera_count": len(imported_cams),
+            "colmap_dir": colmap_dir,
+            "rig_name": rig.GetName(),
+            "has_render_cam": render_cam is not None,
+        }
+    finally:
+        doc.EndUndo()
+
+
+# ---------------------------------------------------------------------------
 # Dialog — UI widget IDs
 # ---------------------------------------------------------------------------
 
@@ -1601,6 +1902,11 @@ class _IDs:
     BTN_COLMAP_ONLY = 1091
     BTN_CLOSE = 1092
 
+    # Import
+    COLMAP_IMPORT_PATH = 1093
+    COLMAP_IMPORT_BROWSE = 1094
+    BTN_IMPORT_COLMAP = 1095
+
     # Status
     STATUS_TEXT = 1099
 
@@ -1618,6 +1924,8 @@ class _IDs:
     GRP_INTRINSICS = 2015
     GRP_ARRAY = 2016
     GRP_TAKES = 2017
+    GRP_IMPORT_TAB = 2019
+    GRP_IMPORT_PATH_ROW = 2020
 
 
 # ---------------------------------------------------------------------------
@@ -1671,6 +1979,8 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self._build_output_tab()
         self._add_section_divider()
         self._build_export_tab()
+        self._add_section_divider()
+        self._build_import_tab()
 
         self.GroupEnd()
 
@@ -1888,6 +2198,42 @@ class C4D2GSDialog(c4d.gui.GeDialog):
 
         self.GroupEnd()
 
+    def _build_import_tab(self):
+        """Build the 'Import COLMAP Cameras' UI section.
+
+        Lets the user point at an existing COLMAP folder (one that contains
+        cameras.txt and images.txt) and click a button to create matching
+        Cinema 4D cameras.  Renders from those cameras will be perfectly
+        aligned with the point cloud and any Gaussian Splat trained on the
+        same dataset — which is the fix for the mirror / misalignment issue
+        observed when the COLMAP cameras differ from the plugin-generated rig.
+        """
+        self.GroupBegin(_IDs.GRP_IMPORT_TAB,
+                        c4d.BFH_SCALEFIT,
+                        cols=1, title="Import COLMAP Cameras", groupflags=c4d.BORDER_GROUP_IN)
+        self.GroupBorderSpace(6, 6, 6, 6)
+
+        self.GroupBegin(2045, c4d.BFH_SCALEFIT, cols=2,
+                        title="COLMAP Source", groupflags=c4d.BORDER_GROUP_IN)
+        self.GroupBorderSpace(6, 4, 6, 4)
+
+        self.AddStaticText(3070, c4d.BFH_LEFT, name="COLMAP Folder")
+        self.GroupBegin(_IDs.GRP_IMPORT_PATH_ROW, c4d.BFH_SCALEFIT, cols=2, rows=1)
+        self.AddEditText(_IDs.COLMAP_IMPORT_PATH, c4d.BFH_SCALEFIT)
+        self.AddButton(_IDs.COLMAP_IMPORT_BROWSE, c4d.BFH_RIGHT, name="Browse…")
+        self.GroupEnd()
+
+        self.AddStaticText(3071, c4d.BFH_LEFT, name="")
+        self.AddStaticText(3072, c4d.BFH_LEFT,
+                           name="Folder must contain cameras.txt and images.txt")
+
+        self.AddStaticText(3073, c4d.BFH_LEFT, name="")
+        self.AddButton(_IDs.BTN_IMPORT_COLMAP, c4d.BFH_SCALEFIT,
+                       name="  Import COLMAP Cameras  ")
+        self.GroupEnd()
+
+        self.GroupEnd()
+
     @staticmethod
     def _output_format_items():
         items = []
@@ -1955,6 +2301,9 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self._sf(_IDs.CX, s.cx, -1e9, 1e9, 1.0)
         self._sf(_IDs.CY, s.cy, -1e9, 1e9, 1.0)
         self._si(_IDs.SPARSE_COUNT, s.sparse_count, 8, 100000)
+
+        # Import tab
+        self.SetString(_IDs.COLMAP_IMPORT_PATH, str(getattr(s, "colmap_import_path", "")))
 
         self._update_array_pattern_ui()
         self._update_center_offset_ui()
@@ -2034,6 +2383,9 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         s.cx = float(self.GetFloat(_IDs.CX))
         s.cy = float(self.GetFloat(_IDs.CY))
         s.sparse_count = max(8, int(self.GetInt32(_IDs.SPARSE_COUNT)))
+
+        raw_import = self.GetString(_IDs.COLMAP_IMPORT_PATH).strip()
+        s.colmap_import_path = _normalize_path(raw_import) if raw_import else ""
 
     # ------------------------------------------------------------------
     # Status bar
@@ -2358,6 +2710,59 @@ class C4D2GSDialog(c4d.gui.GeDialog):
                 self._read_ui()
                 _save_settings(self._settings)
             self.Close()
+            return True
+
+        if cid == _IDs.COLMAP_IMPORT_BROWSE:
+            picked = c4d.storage.LoadDialog(
+                flags=c4d.FILESELECT_DIRECTORY,
+                title="Select COLMAP Input Folder (containing cameras.txt / images.txt)",
+            )
+            if picked:
+                self.SetString(_IDs.COLMAP_IMPORT_PATH, _normalize_path(picked))
+                if self._values_ready:
+                    self._read_ui()
+                    _save_settings(self._settings)
+            return True
+
+        if cid == _IDs.BTN_IMPORT_COLMAP:
+            self._read_ui()
+            doc = c4d.documents.GetActiveDocument()
+            if doc is None:
+                show_error_dialog(ERROR_NO_DOCUMENT, "No active Cinema 4D document.")
+                return True
+            colmap_dir = str(getattr(self._settings, "colmap_import_path", "")).strip()
+            if not colmap_dir:
+                show_error_dialog(
+                    ERROR_NO_OUTPUT_PATH,
+                    "COLMAP Input Folder is empty.",
+                    "Browse to the folder that contains cameras.txt and images.txt."
+                )
+                return True
+            self.SetString(_IDs.STATUS_TEXT, "Importing COLMAP cameras…")
+            try:
+                result = import_colmap_cameras(doc, self._settings, colmap_dir)
+                _save_settings(self._settings)
+                self._refresh_status()
+                lines = [
+                    "COLMAP cameras imported!",
+                    "",
+                    "Rig:         {}".format(result["rig_name"]),
+                    "Cameras:     {}".format(result["camera_count"]),
+                    "Source:      {}".format(result["colmap_dir"]),
+                    "",
+                ]
+                if result.get("has_render_cam"):
+                    lines.append("An animated render camera (GS_ImportedRenderCam) was created.")
+                    lines.append("")
+                lines += [
+                    "Renders from these cameras will be perfectly aligned",
+                    "with the point cloud and Gaussian Splat trained on",
+                    "this COLMAP dataset.",
+                ]
+                c4d.gui.MessageDialog("\n".join(lines))
+            except Exception as exc:
+                self._refresh_status()
+                show_error_dialog(ERROR_BUILD_FAILED, "COLMAP import failed.", exc)
             return True
 
         # Refresh status on any field change
