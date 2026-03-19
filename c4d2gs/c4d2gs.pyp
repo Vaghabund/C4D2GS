@@ -52,6 +52,8 @@ PERSIST_KEY_JSON = 1
 NUMERIC_CLEAN_EPS = 1e-10
 MAX_TRACK_OBS_PER_POINT = 12
 RS_CAMERA_TYPE_ID = 1057516   # Redshift RSCamera plugin object type
+# Poisson Disk mode falls back to Fibonacci above this count to avoid O(n²) hang.
+POISSON_SPHERE_CAP = 500
 
 
 def show_error_dialog(code, summary, details=None):
@@ -752,7 +754,14 @@ def poisson_sphere_points(count):
     Uses a rejection approach with golden-spiral candidates; falls back to
     plain Fibonacci when no valid candidate is found in ``max_attempts``
     tries.
+
+    For large counts (> ``POISSON_SPHERE_CAP``), the function automatically
+    falls back to Fibonacci to avoid quadratic O(n²) distance-checking time
+    that could freeze Cinema 4D.
     """
+    if count > POISSON_SPHERE_CAP:
+        return fibonacci_sphere_points(count)
+
     if count <= 0:
         return []
     if count == 1:
@@ -810,7 +819,12 @@ def cylinder_world_points(settings, center):
 
 
 def grid_world_points(settings, center):
-    """Cameras arranged in a rectangular grid facing the *center* direction."""
+    """Cameras arranged in a rectangular grid facing the *center* direction.
+
+    ``settings.sphere_radius`` is used as the distance (depth) from *center*
+    at which the grid plane is placed.  It is intentionally reused so the
+    existing Radius UI control serves as the grid depth.
+    """
     size_x = max(1, int(getattr(settings, "grid_size_x", 3)))
     size_y = max(1, int(getattr(settings, "grid_size_y", 3)))
     spacing = max(0.1, float(getattr(settings, "grid_spacing", 200.0)))
@@ -827,19 +841,21 @@ def grid_world_points(settings, center):
 def vertex_world_points(target_obj):
     """World-space positions of *target_obj*'s polygon vertices.
 
-    Walks the cache hierarchy so parametric objects (Spheres, Cubes, etc.)
-    are handled automatically.  Returns an empty list when no polygon data
-    is available.
+    Walks the entire cache hierarchy and accumulates vertices from **all**
+    ``Opolygon`` nodes found, so complex generators that produce multiple
+    polygon caches (e.g. cloners, booleans) contribute all their vertices.
+    Returns an empty list when no polygon data is available.
     """
     if target_obj is None:
         return []
+    all_pts = []
     for node in _iter_cache_hierarchy(target_obj):
         if node.CheckType(c4d.Opolygon):
             mg = node.GetMg()
             pts = node.GetAllPoints()
             if pts:
-                return [p * mg for p in pts]
-    return []
+                all_pts.extend(p * mg for p in pts)
+    return all_pts
 
 
 def compute_look_target(cam_pos, target_pos, direction_mode):
@@ -1258,7 +1274,14 @@ def _is_camera_obj(obj):
     return obj.CheckType(c4d.Ocamera) or obj.CheckType(RS_CAMERA_TYPE_ID)
 
 
-def _set_focus_distance_to_target(cam, target_pos):
+def _set_focus_distance_to_target(cam, target_pos, has_target_tag=True):
+    """Set the camera focus distance to the distance from *cam* to *target_pos*.
+
+    *has_target_tag* controls whether the "Use Target Object" DOF toggle is
+    also enabled.  Pass ``False`` for cameras that do not have a target
+    expression tag (e.g. outward/tangential cameras) so the DOF target-link
+    toggle is not left in a broken state.
+    """
     if cam is None or target_pos is None:
         return
     try:
@@ -1283,6 +1306,9 @@ def _set_focus_distance_to_target(cam, target_pos):
             break
         except Exception:
             continue
+
+    if not has_target_tag:
+        return
 
     # Enable the "Use Target Object" checkbox so focus tracks the target tag.
     # Parameter name varies across C4D versions; try all known candidates.
@@ -1381,10 +1407,12 @@ def run_pipeline(doc, settings, target_obj):
                 # points at target_null even when the rig is moved later.
                 cam.SetAbsPos(wpos)
                 _create_target_tag(cam, target_null)
+                _set_focus_distance_to_target(cam, target_pos, has_target_tag=True)
             else:
                 # Outward / Tangential: bake orientation directly into matrix.
                 cam.SetMg(look_at_matrix(wpos, look_t))
-            _set_focus_distance_to_target(cam, target_pos)
+                # No target tag — do not enable DOF "use target" toggle.
+                _set_focus_distance_to_target(cam, target_pos, has_target_tag=False)
             doc.AddUndo(c4d.UNDOTYPE_NEWOBJ, cam)
             static_cams.append(cam)
 
@@ -2086,15 +2114,17 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         is_vertex = (pattern == 3)
 
         # Camera Count: not relevant for vertex (positions come from geometry)
-        count_enabled = not is_vertex
+        # or grid (count is determined by grid_size_x * grid_size_y).
+        count_enabled = not is_vertex and not is_grid
         for cid in [_IDs.CAM_COUNT]:
             try:
                 self.Enable(cid, count_enabled)
             except Exception:
                 pass
 
-        # Radius: not relevant for vertex or grid (grid uses spacing)
-        radius_enabled = is_sphere or is_cylinder
+        # Radius: used as sphere/cylinder radius and as grid depth, so it is
+        # relevant for sphere, cylinder, and grid; disabled only for vertex.
+        radius_enabled = not is_vertex
         for cid in [_IDs.RADIUS]:
             try:
                 self.Enable(cid, radius_enabled)
