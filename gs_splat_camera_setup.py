@@ -749,12 +749,14 @@ def export_colmap_for_postshot(world_points, target_pos, output_dir, render_cam=
         f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[]\n")
         f.write("# Number of points: {}\n".format(len(valid_points)))
         for pid, p3d, track in valid_points:
+            # Mirror the exported point cloud on world Z only.
+            mirrored_z = -p3d.z
             track_flat = " ".join(["{} {}".format(img_id, p2d_idx) for img_id, p2d_idx in track])
             f.write("{} {} {} {} 255 255 255 1.0 {}\n".format(
                 pid,
                 p3d.x,
                 p3d.y,
-                p3d.z,
+                mirrored_z,
                 track_flat,
             ))
 
