@@ -121,6 +121,36 @@ def _copy_matrix(mg):
     return out
 
 
+# ---------------------------------------------------------------------------
+# Coordinate-conversion helpers shared by c2w_to_colmap_extrinsics and
+# project_world_to_image (two-Y-flip approach matching the COLMAP importer).
+# ---------------------------------------------------------------------------
+
+def _make_flip_y_matrix():
+    """Return a C4D Matrix that flips the Y axis (diag(1, -1, 1))."""
+    m = c4d.Matrix()
+    m.v1 = c4d.Vector(1,  0, 0)
+    m.v2 = c4d.Vector(0, -1, 0)
+    m.v3 = c4d.Vector(0,  0, 1)
+    m.off = c4d.Vector(0, 0, 0)
+    return m
+
+
+def _apply_world_flip_y(mat):
+    """Return a copy of *mat* with Y negated on all columns and the offset."""
+    out = c4d.Matrix()
+    out.v1  = c4d.Vector(mat.v1.x,  -mat.v1.y,  mat.v1.z)
+    out.v2  = c4d.Vector(mat.v2.x,  -mat.v2.y,  mat.v2.z)
+    out.v3  = c4d.Vector(mat.v3.x,  -mat.v3.y,  mat.v3.z)
+    out.off = c4d.Vector(mat.off.x, -mat.off.y, mat.off.z)
+    return out
+
+
+def _flip_y_vec(v):
+    """Return *v* with its Y component negated (C4D world → COLMAP world)."""
+    return c4d.Vector(v.x, -v.y, v.z)
+
+
 def fibonacci_sphere_points(count):
     """Return *count* roughly-evenly-spaced unit vectors on a sphere (Fibonacci lattice)."""
     if count <= 0:
@@ -192,26 +222,24 @@ def rotation_matrix_to_quaternion(r):
 def c2w_to_colmap_extrinsics(mg):
     """Convert a C4D camera-to-world matrix to COLMAP extrinsics (q, t, R_w2c).
 
-    Applies S = diag(1, -1, -1):
-      R_w2c rows = [ xw, -yw, -zw ]
-      t = -R_w2c * camera_centre
-
-    C4D camera frame: +X right, +Y up, +Z backward (looks down -Z).
-    COLMAP/OpenCV frame: +X right, +Y down, +Z forward.
+    Matches the published COLMAP importer: two Y flips (world and camera-local),
+    no Z flip.
+      1) Undo camera-local Y flip: mg1 = mg * diag(1, -1, 1)
+      2) Undo world Y flip:        mg2 = diag(1, -1, 1) * mg1 (applied to basis + position)
+      3) mg2 is COLMAP c2w; R_w2c = transpose(mg2); t = -R_w2c * C
     """
-    xw = mg.v1   # local +X in world space
-    yw = mg.v2   # local +Y in world space
-    zw = mg.v3   # local +Z in world space (backward)
-    c  = mg.off  # camera centre
+    mg1 = mg * _make_flip_y_matrix()   # undo camera-local Y flip
+    mg2 = _apply_world_flip_y(mg1)     # undo world Y flip
 
+    c_pos = mg2.off
     r_w2c = [
-        [ xw.x,  xw.y,  xw.z],   # row 0: unchanged  (X right → X right)
-        [-yw.x, -yw.y, -yw.z],   # row 1: negated     (C4D up  → COLMAP down)
-        [-zw.x, -zw.y, -zw.z],   # row 2: negated     (C4D back → COLMAP forward)
+        [mg2.v1.x, mg2.v1.y, mg2.v1.z],
+        [mg2.v2.x, mg2.v2.y, mg2.v2.z],
+        [mg2.v3.x, mg2.v3.y, mg2.v3.z],
     ]
-    tx = -(r_w2c[0][0] * c.x + r_w2c[0][1] * c.y + r_w2c[0][2] * c.z)
-    ty = -(r_w2c[1][0] * c.x + r_w2c[1][1] * c.y + r_w2c[1][2] * c.z)
-    tz = -(r_w2c[2][0] * c.x + r_w2c[2][1] * c.y + r_w2c[2][2] * c.z)
+    tx = -(r_w2c[0][0] * c_pos.x + r_w2c[0][1] * c_pos.y + r_w2c[0][2] * c_pos.z)
+    ty = -(r_w2c[1][0] * c_pos.x + r_w2c[1][1] * c_pos.y + r_w2c[1][2] * c_pos.z)
+    tz = -(r_w2c[2][0] * c_pos.x + r_w2c[2][1] * c_pos.y + r_w2c[2][2] * c_pos.z)
     qw, qx, qy, qz = rotation_matrix_to_quaternion(r_w2c)
     return (qw, qx, qy, qz), (tx, ty, tz), r_w2c
 
@@ -220,30 +248,32 @@ def project_world_to_image(mg, world_point, world_normal, fx, fy, cx, cy,
                             require_front_facing=True):
     """Project a world-space point onto the image plane.
 
-    Uses C4D camera-local space directly:
-      local = (~mg) * world_point
-      C4D camera looks down -Z, so local.z < 0 means the point is in front.
-      depth  = -local.z
-      u = fx * (local.x  / depth) + cx
-      v = fy * (-local.y / depth) + cy   (negate Y: C4D up → COLMAP/image down)
+    Mirrors the importer pipeline (inverts two Y flips, no Z flip):
+      1) Apply camera-local Y flip: mg1 = mg * diag(1, -1, 1)
+      2) Apply world Y flip to get COLMAP c2w: mg2
+      3) Transform world point to COLMAP frame: p_col = flip_y(world_point)
+      4) Project via COLMAP/OpenCV convention (Z forward, Y down)
 
     Returns (u, v) or None if behind camera / back-facing.
     """
-    # Optional front-facing cull in C4D world space.
-    if world_normal is not None and require_front_facing:
-        to_cam = _normalize(mg.off - world_point)
-        if _dot(to_cam, world_normal) <= 0.0:
-            return None
+    mg1 = mg * _make_flip_y_matrix()
+    mg2 = _apply_world_flip_y(mg1)   # c2w in COLMAP frame
 
-    local = (~mg) * world_point
-    # C4D camera looks down -Z; use -1e-6 threshold to reject grazing depths.
-    if local.z >= -1e-6:
+    p_col = _flip_y_vec(world_point)  # world → COLMAP
+    if world_normal is not None:
+        n_col = _flip_y_vec(world_normal)
+        if require_front_facing:
+            to_cam_col = _normalize(mg2.off - p_col)
+            if _dot(to_cam_col, n_col) <= 0.0:
+                return None
+
+    local = (~mg2) * p_col
+    x_cv = local.x
+    y_cv = local.y  # already Y-down from flip
+    z_cv = local.z  # forward
+    if z_cv <= 1e-6:
         return None
-
-    depth = -local.z
-    u = (fx * ( local.x / depth)) + cx
-    v = (fy * (-local.y / depth)) + cy   # negate Y: C4D up → image down
-    return u, v
+    return (fx * (x_cv / z_cv)) + cx, (fy * (y_cv / z_cv)) + cy
 
 
 def _cap_observations(candidates, max_count):
