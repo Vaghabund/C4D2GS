@@ -126,14 +126,22 @@ def _copy_matrix(mg):
 # project_world_to_image (two-Y-flip approach matching the COLMAP importer).
 # ---------------------------------------------------------------------------
 
-def _make_flip_y_matrix():
-    """Return a C4D Matrix that flips the Y axis (diag(1, -1, 1))."""
-    m = c4d.Matrix()
-    m.v1 = c4d.Vector(1,  0, 0)
-    m.v2 = c4d.Vector(0, -1, 0)
-    m.v3 = c4d.Vector(0,  0, 1)
-    m.off = c4d.Vector(0, 0, 0)
-    return m
+# Singleton diag(1,-1,1) matrix.  Constructed once on first use so that the
+# module can be imported safely before the C4D environment is fully up.
+_FLIP_Y_MATRIX = None
+
+
+def _get_flip_y_matrix():
+    """Return a cached diag(1, -1, 1) C4D Matrix (constructed once)."""
+    global _FLIP_Y_MATRIX
+    if _FLIP_Y_MATRIX is None:
+        m = c4d.Matrix()
+        m.v1  = c4d.Vector(1,  0, 0)
+        m.v2  = c4d.Vector(0, -1, 0)
+        m.v3  = c4d.Vector(0,  0, 1)
+        m.off = c4d.Vector(0,  0, 0)
+        _FLIP_Y_MATRIX = m
+    return _FLIP_Y_MATRIX
 
 
 def _apply_world_flip_y(mat):
@@ -228,7 +236,7 @@ def c2w_to_colmap_extrinsics(mg):
       2) Undo world Y flip:        mg2 = diag(1, -1, 1) * mg1 (applied to basis + position)
       3) mg2 is COLMAP c2w; R_w2c = transpose(mg2); t = -R_w2c * C
     """
-    mg1 = mg * _make_flip_y_matrix()   # undo camera-local Y flip
+    mg1 = mg * _get_flip_y_matrix()    # undo camera-local Y flip
     mg2 = _apply_world_flip_y(mg1)     # undo world Y flip
 
     c_pos = mg2.off
@@ -256,7 +264,7 @@ def project_world_to_image(mg, world_point, world_normal, fx, fy, cx, cy,
 
     Returns (u, v) or None if behind camera / back-facing.
     """
-    mg1 = mg * _make_flip_y_matrix()
+    mg1 = mg * _get_flip_y_matrix()
     mg2 = _apply_world_flip_y(mg1)   # c2w in COLMAP frame
 
     p_col = _flip_y_vec(world_point)  # world → COLMAP
@@ -274,6 +282,29 @@ def project_world_to_image(mg, world_point, world_normal, fx, fy, cx, cy,
     if z_cv <= 1e-6:
         return None
     return (fx * (x_cv / z_cv)) + cx, (fy * (y_cv / z_cv)) + cy
+
+
+def _project_in_colmap_frame(colmap_mg, colmap_inv_mg, world_point, world_normal,
+                              fx, fy, cx, cy, require_front_facing=True):
+    """Project *world_point* using pre-computed COLMAP-frame matrices.
+
+    Identical math to :func:`project_world_to_image` but accepts a
+    pre-computed COLMAP c2w and its inverse so the two-Y-flip transform is
+    not repeated on every call inside the sparse-point × camera hot loop.
+    """
+    p_col = _flip_y_vec(world_point)
+    if world_normal is not None:
+        n_col = _flip_y_vec(world_normal)
+        if require_front_facing:
+            to_cam_col = _normalize(colmap_mg.off - p_col)
+            if _dot(to_cam_col, n_col) <= 0.0:
+                return None
+
+    local = colmap_inv_mg * p_col
+    z_cv = local.z
+    if z_cv <= 1e-6:
+        return None
+    return (fx * (local.x / z_cv)) + cx, (fy * (local.y / z_cv)) + cy
 
 
 def _cap_observations(candidates, max_count):
@@ -709,16 +740,24 @@ def export_colmap_data(world_points, target_pos, doc, target_obj,
     # ------------------------------------------------------------------
     def _build_image_entries(use_cam_matrices):
         entries = []
+        flip_y = _get_flip_y_matrix()
         for i, world_pos in enumerate(world_points):
             if use_cam_matrices and camera_matrices and i < len(camera_matrices):
                 mg = camera_matrices[i]
             else:
                 mg = look_at_matrix(world_pos, target_pos)
             q, t, r_w2c = c2w_to_colmap_extrinsics(mg)
+            # Precompute COLMAP-frame c2w and its inverse so the hot
+            # sparse-point × camera projection loop avoids repeating the
+            # two-Y-flip transform for every point.
+            colmap_mg = _apply_world_flip_y(mg * flip_y)
+            colmap_inv_mg = ~colmap_mg
             entries.append({
                 "image_id": i + 1,
                 "name": os.path.basename(_frame_image_path(i)),
-                "q": q, "t": t, "r_w2c": r_w2c, "mg": mg, "obs": [],
+                "q": q, "t": t, "r_w2c": r_w2c, "mg": mg,
+                "colmap_mg": colmap_mg, "colmap_inv_mg": colmap_inv_mg,
+                "obs": [],
             })
         return entries
 
@@ -737,8 +776,9 @@ def export_colmap_data(world_points, target_pos, doc, target_obj,
             tracks[pid] = []
             candidates = []
             for entry in image_entries:
-                projected = project_world_to_image(
-                    entry["mg"], p3d, nrm, fx, fy, cx, cy,
+                projected = _project_in_colmap_frame(
+                    entry["colmap_mg"], entry["colmap_inv_mg"],
+                    p3d, nrm, fx, fy, cx, cy,
                     require_front_facing=require_front_facing,
                 )
                 if projected is None:
