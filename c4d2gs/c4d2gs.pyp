@@ -1533,12 +1533,11 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self.SetTitle("C4D2GS  —  Synthetic COLMAP Data Generator  v{}".format(PLUGIN_VERSION))
 
         # ---- Action buttons (top strip) ----
-        self.GroupBegin(_IDs.GRP_BUTTONS, c4d.BFH_SCALEFIT, cols=4, rows=1)
+        self.GroupBegin(_IDs.GRP_BUTTONS, c4d.BFH_SCALEFIT, cols=3, rows=1)
         self.GroupBorderSpace(6, 6, 6, 4)
-        self.AddButton(_IDs.BTN_CREATE_RIG, c4d.BFH_SCALEFIT, name="  Create / Update Rig  ")
+        self.AddButton(_IDs.BTN_CREATE_RIG, c4d.BFH_SCALEFIT, name="  Build Rig  ")
+        self.AddButton(_IDs.BTN_COLMAP_ONLY, c4d.BFH_SCALEFIT, name="  Export COLMAP  ")
         self.AddButton(_IDs.BTN_EXECUTE, c4d.BFH_SCALEFIT, name="  Build & Export  ")
-        self.AddButton(_IDs.BTN_COLMAP_ONLY, c4d.BFH_SCALEFIT, name="  Synthetic COLMAP Data Only  ")
-        self.AddButton(_IDs.BTN_CLOSE, c4d.BFH_SCALEFIT, name="  Close  ")
         self.GroupEnd()
 
         # ---- Header: target object ----
@@ -1590,16 +1589,6 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         else:
             self.AddEditNumberArrows(_IDs.RADIUS, c4d.BFH_SCALEFIT)
 
-        self.AddStaticText(3002, c4d.BFH_LEFT, name="Center Offset X")
-        self.AddEditNumberArrows(_IDs.CENTER_X, c4d.BFH_SCALEFIT)
-        self.AddStaticText(3003, c4d.BFH_LEFT, name="Center Offset Y")
-        self.AddEditNumberArrows(_IDs.CENTER_Y, c4d.BFH_SCALEFIT)
-        self.AddStaticText(3004, c4d.BFH_LEFT, name="Center Offset Z")
-        self.AddEditNumberArrows(_IDs.CENTER_Z, c4d.BFH_SCALEFIT)
-        self.AddStaticText(3005, c4d.BFH_LEFT, name="Center Mode")
-        self.AddComboBox(_IDs.CENTER_MODE, c4d.BFH_SCALEFIT)
-        self.AddChild(_IDs.CENTER_MODE, 0, "Geometry Center")
-        self.AddChild(_IDs.CENTER_MODE, 1, "Axis Pivot")
 
         self.AddStaticText(3006, c4d.BFH_LEFT, name="Camera Type")
         self.AddComboBox(_IDs.CAMERA_TYPE, c4d.BFH_SCALEFIT)
@@ -1711,22 +1700,6 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self.AddStaticText(3040, c4d.BFH_LEFT, name="Export Synthetic COLMAP Data")
         self.AddCheckbox(_IDs.EXPORT_COLMAP, c4d.BFH_LEFT, 0, 0, name="")
 
-        self.AddStaticText(3041, c4d.BFH_LEFT, name="Auto Intrinsics from Cam")
-        self.AddCheckbox(_IDs.AUTO_INTRINSICS, c4d.BFH_LEFT, 0, 0, name="")
-
-        self.GroupBegin(_IDs.GRP_INTRINSICS, c4d.BFH_SCALEFIT, cols=2,
-                        title="Manual Intrinsics", groupflags=c4d.BORDER_GROUP_IN)
-        self.GroupBorderSpace(6, 2, 6, 2)
-        self.AddStaticText(3043, c4d.BFH_LEFT, name="fx")
-        self.AddEditNumberArrows(_IDs.FX, c4d.BFH_SCALEFIT)
-        self.AddStaticText(3044, c4d.BFH_LEFT, name="fy")
-        self.AddEditNumberArrows(_IDs.FY, c4d.BFH_SCALEFIT)
-        self.AddStaticText(3045, c4d.BFH_LEFT, name="cx")
-        self.AddEditNumberArrows(_IDs.CX, c4d.BFH_SCALEFIT)
-        self.AddStaticText(3046, c4d.BFH_LEFT, name="cy")
-        self.AddEditNumberArrows(_IDs.CY, c4d.BFH_SCALEFIT)
-        self.GroupEnd()
-
         self.AddStaticText(3047, c4d.BFH_LEFT, name="Sparse Point Count")
         self.AddEditNumberArrows(_IDs.SPARSE_COUNT, c4d.BFH_SCALEFIT)
         self.GroupEnd()
@@ -1759,10 +1732,11 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self._si(_IDs.CAM_COUNT, s.camera_count, 1, 100000)
         s.sphere_radius = max(RADIUS_MIN, min(RADIUS_MAX, float(s.sphere_radius)))
         self._sf(_IDs.RADIUS, s.sphere_radius, RADIUS_MIN, RADIUS_MAX, 1.0)
-        self._sf(_IDs.CENTER_X, s.center_x, -1e9, 1e9, 1.0)
-        self._sf(_IDs.CENTER_Y, s.center_y, -1e9, 1e9, 1.0)
-        self._sf(_IDs.CENTER_Z, s.center_z, -1e9, 1e9, 1.0)
-        self.SetInt32(_IDs.CENTER_MODE, int(getattr(s, "center_mode", 0)))
+        # Force axis center mode and zero center offset
+        s.center_mode = 1
+        s.center_x = 0.0
+        s.center_y = 0.0
+        s.center_z = 0.0
         self.SetInt32(_IDs.CAMERA_TYPE, int(getattr(s, "camera_type", 0)))
         self.SetInt32(_IDs.SAMPLING_MODE, s.sampling_mode)
         self._sf(_IDs.SPIRAL_TURNS, s.spiral_turns, 0.01, 1e6, 0.1)
@@ -1781,18 +1755,21 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self.SetBool(_IDs.AUTO_UPDATE_RIG, bool(s.auto_update_rig))
         self.SetBool(_IDs.EXPORT_JSON, bool(s.export_json))
         self.SetBool(_IDs.EXPORT_COLMAP, bool(s.export_colmap))
-        self.SetBool(_IDs.AUTO_INTRINSICS, bool(s.auto_intrinsics))
-        self._sf(_IDs.FX, s.fx, 0.01, 1e9, 1.0)
-        self._sf(_IDs.FY, s.fy, 0.01, 1e9, 1.0)
-        self._sf(_IDs.CX, s.cx, -1e9, 1e9, 1.0)
-        self._sf(_IDs.CY, s.cy, -1e9, 1e9, 1.0)
+        # Always force auto intrinsics on
         self._si(_IDs.SPARSE_COUNT, s.sparse_count, 8, 100000)
 
-        self._update_center_offset_ui()
-        self._update_intrinsics_ui()
+        self._update_spiral_ui()
         self._refresh_status()
         self._values_ready = True
         return True
+
+    def _update_spiral_ui(self):
+        spiral_enabled = int(self.GetInt32(_IDs.SAMPLING_MODE)) == 0
+        for cid in [3006, _IDs.SPIRAL_TURNS, 3007, _IDs.SPIRAL_POLE]:
+            try:
+                self.Enable(cid, spiral_enabled)
+            except Exception:
+                pass
 
     def _si(self, cid, value, mn, mx):
         try:
@@ -1824,10 +1801,10 @@ class C4D2GSDialog(c4d.gui.GeDialog):
 
         s.camera_count = max(1, int(self.GetInt32(_IDs.CAM_COUNT)))
         s.sphere_radius = max(RADIUS_MIN, min(RADIUS_MAX, float(self.GetFloat(_IDs.RADIUS))))
-        s.center_x = float(self.GetFloat(_IDs.CENTER_X))
-        s.center_y = float(self.GetFloat(_IDs.CENTER_Y))
-        s.center_z = float(self.GetFloat(_IDs.CENTER_Z))
-        s.center_mode = int(self.GetInt32(_IDs.CENTER_MODE))
+        s.center_x = 0.0
+        s.center_y = 0.0
+        s.center_z = 0.0
+        s.center_mode = 1
         s.camera_type = int(self.GetInt32(_IDs.CAMERA_TYPE))
         s.sampling_mode = int(self.GetInt32(_IDs.SAMPLING_MODE))
         s.spiral_turns = max(0.01, float(self.GetFloat(_IDs.SPIRAL_TURNS)))
@@ -1846,32 +1823,17 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         s.auto_update_rig = bool(self.GetBool(_IDs.AUTO_UPDATE_RIG))
         s.export_json = bool(self.GetBool(_IDs.EXPORT_JSON))
         s.export_colmap = bool(self.GetBool(_IDs.EXPORT_COLMAP))
-        s.auto_intrinsics = bool(self.GetBool(_IDs.AUTO_INTRINSICS))
-        s.fx = float(self.GetFloat(_IDs.FX))
-        s.fy = float(self.GetFloat(_IDs.FY))
-        s.cx = float(self.GetFloat(_IDs.CX))
-        s.cy = float(self.GetFloat(_IDs.CY))
+        s.auto_intrinsics = True
         s.sparse_count = max(8, int(self.GetInt32(_IDs.SPARSE_COUNT)))
+
+        self._update_spiral_ui()
 
     # ------------------------------------------------------------------
     # Status bar
     # ------------------------------------------------------------------
 
     def _refresh_status(self):
-        s = self._settings
-        name = self._target_obj.GetName() if self._target_obj else "(none)"
-        mode = s.sampling_mode_name()
-        center_mode = "Geometry" if int(getattr(s, "center_mode", 0)) == 0 else "Axis"
-        exports = []
-        if s.export_json:
-            exports.append("JSON")
-        if s.export_colmap:
-            exports.append("COLMAP")
-        exp_str = " + ".join(exports) if exports else "none"
-        status = (
-            "Target: {}  |  Cameras: {}  |  Mode: {}  |  Center: {}  |  "
-            "Res: {}×{}  |  Export: {}"
-        ).format(name, s.camera_count, mode, center_mode, s.res_x, s.res_y, exp_str)
+        status = "Version: {}".format(PLUGIN_VERSION)
         self.SetString(_IDs.STATUS_TEXT, status)
 
     def _try_auto_update_rig(self, cid):
@@ -1904,22 +1866,6 @@ class C4D2GSDialog(c4d.gui.GeDialog):
             pass
         finally:
             self._is_auto_updating = False
-
-    def _update_intrinsics_ui(self):
-        manual_intrinsics_enabled = not bool(self.GetBool(_IDs.AUTO_INTRINSICS))
-        for cid in [_IDs.FX, _IDs.FY, _IDs.CX, _IDs.CY]:
-            try:
-                self.Enable(cid, manual_intrinsics_enabled)
-            except Exception:
-                pass
-
-    def _update_center_offset_ui(self):
-        offsets_enabled = int(self.GetInt32(_IDs.CENTER_MODE)) == 0
-        for cid in [3002, _IDs.CENTER_X, 3003, _IDs.CENTER_Y, 3004, _IDs.CENTER_Z]:
-            try:
-                self.Enable(cid, offsets_enabled)
-            except Exception:
-                pass
 
     def _resolve_target_object(self, doc):
         link_obj = self._get_link_target(doc)
@@ -2034,7 +1980,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
                     "Object:  {}\n"
                     "Cameras: {}\n"
                     "Mode:    {}\n\n"
-                    "Tip: tweak parameters and click Create / Update Rig again to iterate quickly.".format(
+                    "Tip: tweak parameters and click Build Rig again to iterate quickly.".format(
                         result.get("target_name", "?"),
                         result.get("camera_count", 0),
                         result.get("mode", "?"),
@@ -2135,8 +2081,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self._read_ui()
         _save_settings(self._settings)
         self._try_auto_update_rig(cid)
-        self._update_center_offset_ui()
-        self._update_intrinsics_ui()
+        self._update_spiral_ui()
         self._refresh_status()
         return True
 
