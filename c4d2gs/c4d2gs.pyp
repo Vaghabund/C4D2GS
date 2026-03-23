@@ -70,7 +70,7 @@ _DEFAULTS = dict(
     spiral_pole_margin=0.06,
     output_path=os.path.join(os.path.expanduser("~"), "Documents",
                              "gs_capture"),
-    output_format=None,        # filled at runtime from c4d.FILTER_PNG
+    output_format=1023671,     # c4d.FILTER_PNG; overridden at runtime in Settings.__init__
     res_x=1920,
     res_y=1080,
     fps=30,
@@ -407,7 +407,11 @@ def c2w_to_colmap_extrinsics(mg):
 def project_world_to_image(mg, world_point, world_normal, fx, fy, cx, cy,
                            require_front_facing=True):
     # Mirror importer pipeline (invert two Y flips, no Z flip) for projection.
-    flip_y = c4d.Matrix(); flip_y.v1 = c4d.Vector(1,0,0); flip_y.v2 = c4d.Vector(0,-1,0); flip_y.v3 = c4d.Vector(0,0,1); flip_y.off = c4d.Vector(0,0,0)
+    flip_y = c4d.Matrix()
+    flip_y.v1 = c4d.Vector(1, 0, 0)
+    flip_y.v2 = c4d.Vector(0, -1, 0)
+    flip_y.v3 = c4d.Vector(0, 0, 1)
+    flip_y.off = c4d.Vector(0, 0, 0)
 
     def _apply_flip_y_vec(v):
         return c4d.Vector(v.x, -v.y, v.z)
@@ -913,7 +917,7 @@ def export_camera_poses_json(settings, world_points, target_pos, render_cam=None
     out_dir = os.path.dirname(out_path)
     if out_dir and not os.path.exists(out_dir):
         os.makedirs(out_dir)
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
     return out_path
 
@@ -924,7 +928,7 @@ def export_camera_poses_json(settings, world_points, target_pos, render_cam=None
 
 def _write_cameras_txt(path, intrinsics, res_x, res_y):
     model = str(intrinsics["model"]).strip().upper()
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("# Camera list with one line of data per camera:\n")
         f.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
         f.write("# Number of cameras: 1\n")
@@ -1080,7 +1084,7 @@ def export_colmap(settings, world_points, target_pos, output_dir,
             fallback_core_volume_points = True
 
     # images.txt
-    with open(images_txt, "w") as f:
+    with open(images_txt, "w", encoding="utf-8") as f:
         f.write("# Image list with two lines of data per image:\n")
         f.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
         f.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
@@ -1115,7 +1119,7 @@ def export_colmap(settings, world_points, target_pos, output_dir,
             "fallback_core_volume_points={}".format(fallback_core_volume_points),
         ]
         report = os.path.join(output_dir, "colmap_debug.txt")
-        with open(report, "w") as f:
+        with open(report, "w", encoding="utf-8") as f:
             f.write("\n".join(debug) + "\n")
         raise ValueError(
             "No sparse point had >= 1 observation after visibility checks. "
@@ -1123,7 +1127,7 @@ def export_colmap(settings, world_points, target_pos, output_dir,
             "Debug report: {}".format(report)
         )
 
-    with open(points3d_txt, "w") as f:
+    with open(points3d_txt, "w", encoding="utf-8") as f:
         f.write("# 3D point list with one line of data per point:\n")
         f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[]\n")
         f.write("# Number of points: {}\n".format(len(valid_points)))
@@ -1536,6 +1540,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self._target_link_gui = None
         self._is_auto_updating = False
         self._values_ready = False
+        self._divider_counter = 0  # incremented by _add_section_divider for unique IDs
 
     # ------------------------------------------------------------------
     # Layout
@@ -1628,7 +1633,11 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self.GroupEnd()
 
     def _add_section_divider(self):
-        self.GroupBegin(2090, c4d.BFH_SCALEFIT, cols=1, rows=1)
+        # Each call uses a unique ID pair to avoid duplicate widget IDs in C4D.
+        self._divider_counter += 1
+        grp_id = 2090 + self._divider_counter
+        txt_id = 3090 + self._divider_counter
+        self.GroupBegin(grp_id, c4d.BFH_SCALEFIT, cols=1, rows=1)
         self.GroupBorderSpace(0, 6, 0, 6)
         if hasattr(self, "AddSeparatorH"):
             try:
@@ -1637,7 +1646,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
                 return
             except Exception:
                 pass
-        self.AddStaticText(3090, c4d.BFH_SCALEFIT, name="")
+        self.AddStaticText(txt_id, c4d.BFH_SCALEFIT, name="")
         self.GroupEnd()
 
     def _build_output_tab(self):
@@ -1777,7 +1786,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
 
     def _update_spiral_ui(self):
         spiral_enabled = int(self.GetInt32(_IDs.SAMPLING_MODE)) == 0
-        for cid in [3006, _IDs.SPIRAL_TURNS, 3007, _IDs.SPIRAL_POLE]:
+        for cid in [3011, _IDs.SPIRAL_TURNS, 3012, _IDs.SPIRAL_POLE]:
             try:
                 self.Enable(cid, spiral_enabled)
             except Exception:
