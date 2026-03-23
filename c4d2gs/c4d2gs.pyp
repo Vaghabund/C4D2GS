@@ -1259,6 +1259,18 @@ def configure_render_settings(doc, settings, render_cam, frame_count, create_out
     rd[c4d.RDATA_FRAMESEQUENCE] = c4d.RDATA_FRAMESEQUENCE_ALLFRAMES
     rd[c4d.RDATA_FRAMEFROM] = c4d.BaseTime(0, settings.fps)
     rd[c4d.RDATA_FRAMETO] = c4d.BaseTime(max(0, frame_count - 1), settings.fps)
+
+    try:
+        rd[c4d.RDATA_FILMASPECT] = c4d.RDATA_FILMASPECT_CUSTOM
+        if settings.res_y > 0:
+            rd[c4d.RDATA_PIXELASPECT] = float(settings.res_x) / float(settings.res_y)
+        else:
+            rd[c4d.RDATA_PIXELASPECT] = 1.0
+    except Exception:
+        try:
+            rd[c4d.RDATA_PIXELASPECT] = 1.0
+        except Exception:
+            pass
     if render_cam is not None:
         if hasattr(c4d, "RDATA_CAMERA"):
             rd[c4d.RDATA_CAMERA] = render_cam
