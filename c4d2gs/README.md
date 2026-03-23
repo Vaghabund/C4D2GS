@@ -152,15 +152,6 @@ C4D2GS exports:
 
 ---
 
-## Plugin ID
-
-The plugin is registered under ID **1057843**.  This is a placeholder.  If you
-plan to distribute the plugin commercially or share it publicly, request a
-unique ID from Maxon at <https://developers.maxon.net> and replace the value of
-`PLUGIN_ID` in `c4d2gs.pyp`.
-
----
-
 ## File Structure
 
 ```
@@ -173,4 +164,4 @@ c4d2gs/
 
 ## License
 
-MIT — use freely, modify at will.
+CC BY-NC 4.0 (Creative Commons Attribution-NonCommercial 4.0 International).

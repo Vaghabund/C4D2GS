@@ -18,9 +18,7 @@ Restart Cinema 4D.  The plugin appears under **Plugins ▸ C4D2GS**.
 
 Plugin ID
 ---------
-The plugin is registered under ID **1057843**.  If you plan to distribute this
-plugin commercially you must request your own unique ID from Maxon at
-https://developers.maxon.net — replace PLUGIN_ID below with that value.
+The plugin is registered under ID **1067868**.
 """
 
 import c4d
@@ -33,10 +31,7 @@ import bisect
 # ---------------------------------------------------------------------------
 # Plugin registration constant
 # ---------------------------------------------------------------------------
-# NOTE: 1057843 is a placeholder ID for private/local testing only.
-# Before any public or commercial distribution you MUST request your own unique
-# ID from Maxon (https://developers.maxon.net) and replace this value.
-PLUGIN_ID = 1057843
+PLUGIN_ID = 1067868
 PLUGIN_NAME = "C4D2GS"
 PLUGIN_HELP = "Generate a Postshot-compatible Gaussian Splat dataset from Cinema 4D"
 PLUGIN_VERSION = "1.0.0"
