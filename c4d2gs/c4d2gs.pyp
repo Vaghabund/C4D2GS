@@ -1,11 +1,11 @@
 """
 C4D2GS — Cinema 4D to Gaussian Splat
 ======================================
-A Cinema 4D Python plugin that generates Postshot-compatible datasets for
+A Cinema 4D Python plugin that generates synthetic COLMAP data for
 Gaussian Splatting.  It places a sphere of cameras around any object,
 configures the render settings to output one image per viewpoint, and writes
-the accompanying COLMAP files (cameras.txt / images.txt / points3D.txt) that
-Postshot needs to reconstruct the scene.
+the accompanying synthetic COLMAP data files (cameras.txt / images.txt / points3D.txt) that
+reconstruction tools can use to reconstruct the scene.
 
 Installation
 ------------
@@ -33,7 +33,7 @@ import bisect
 # ---------------------------------------------------------------------------
 PLUGIN_ID = 1067868
 PLUGIN_NAME = "C4D2GS"
-PLUGIN_HELP = "Generate a Postshot-compatible Gaussian Splat dataset from Cinema 4D"
+PLUGIN_HELP = "Generate synthetic COLMAP data for Gaussian Splat workflows in Cinema 4D"
 PLUGIN_VERSION = "1.0.0"
 
 ERROR_NO_DOCUMENT = "C4D2GS-E001"
@@ -919,7 +919,7 @@ def export_camera_poses_json(settings, world_points, target_pos, render_cam=None
 
 
 # ---------------------------------------------------------------------------
-# Export: COLMAP files
+# Export: synthetic COLMAP data files
 # ---------------------------------------------------------------------------
 
 def _write_cameras_txt(path, intrinsics, res_x, res_y):
@@ -941,13 +941,13 @@ def _write_cameras_txt(path, intrinsics, res_x, res_y):
 def export_colmap(settings, world_points, target_pos, output_dir,
                   render_cam=None, doc=None, target_obj=None,
                   camera_matrices=None):
-    """Write cameras.txt / images.txt / points3D.txt for Postshot."""
+    """Write synthetic COLMAP data files for COLMAP pipelines."""
     if not world_points:
         return None
 
     output_dir = _normalize_path(output_dir)
     if not output_dir:
-        raise ValueError("COLMAP output path is empty.")
+        raise ValueError("Synthetic COLMAP data output path is empty.")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     images_dir = os.path.join(output_dir, "images")
@@ -966,7 +966,7 @@ def export_colmap(settings, world_points, target_pos, output_dir,
     width, height = float(settings.res_x), float(settings.res_y)
 
     if doc is None or target_obj is None:
-        raise ValueError("A target object is required for COLMAP export.")
+        raise ValueError("A target object is required for synthetic COLMAP data export.")
 
     sparse_points_with_normals = generate_sparse_points_from_surface(doc, target_obj, settings.sparse_count)
     if not sparse_points_with_normals:
@@ -1025,7 +1025,7 @@ def export_colmap(settings, world_points, target_pos, output_dir,
     # Build 2-D observations with capped track size per 3D point.
     tracks_by_pid = _build_tracks(require_front_facing=True)
 
-    # points3D.txt — Postshot can initialize from points observed in >= 1 camera.
+    # points3D.txt — keep points observed in >= 1 camera.
     valid_points = [
         (pid, p3d, tracks_by_pid[pid])
         for pid, (p3d, _nrm) in enumerate(sparse_points_with_normals, start=1)
@@ -1243,12 +1243,12 @@ def _set_focus_distance_to_target(cam, target_pos):
             continue
 
 
-def configure_render_settings(doc, settings, render_cam, frame_count):
+def configure_render_settings(doc, settings, render_cam, frame_count, create_output_dirs=True):
     rd = doc.GetActiveRenderData()
     if rd is None:
         return
     images_dir = settings.images_output_dir()
-    if not os.path.exists(images_dir):
+    if create_output_dirs and not os.path.exists(images_dir):
         os.makedirs(images_dir)
     rd[c4d.RDATA_XRES] = settings.res_x
     rd[c4d.RDATA_YRES] = settings.res_y
@@ -1272,7 +1272,7 @@ def configure_render_settings(doc, settings, render_cam, frame_count):
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-def run_pipeline(doc, settings, target_obj):
+def run_pipeline(doc, settings, target_obj, create_output_dirs=True):
     """Build camera rig + export files.  Returns a result dict."""
     doc.StartUndo()
     try:
@@ -1347,7 +1347,13 @@ def run_pipeline(doc, settings, target_obj):
                 _add_step_key(render_cam, desc_y, t, local_pos.y)
                 _add_step_key(render_cam, desc_z, t, local_pos.z)
 
-        configure_render_settings(doc, settings, render_cam, len(world_pts))
+        configure_render_settings(
+            doc,
+            settings,
+            render_cam,
+            len(world_pts),
+            create_output_dirs=create_output_dirs,
+        )
 
         camera_matrices = _camera_matrices_for_export(
             doc, render_cam, len(world_pts), settings.fps
@@ -1391,16 +1397,16 @@ def run_pipeline(doc, settings, target_obj):
 
 
 def create_or_update_rig(doc, settings, target_obj):
-    """Create or rebuild camera rig without exporting JSON/COLMAP files."""
+    """Create or rebuild camera rig without exporting JSON/synthetic COLMAP data files."""
     temp = Settings()
     temp.__dict__.update(settings.__dict__)
     temp.export_json = False
     temp.export_colmap = False
-    return run_pipeline(doc, temp, target_obj)
+    return run_pipeline(doc, temp, target_obj, create_output_dirs=False)
 
 
 def run_colmap_only(doc, settings, target_obj):
-    """Export COLMAP files without modifying the scene."""
+    """Export synthetic COLMAP data files without modifying the scene."""
     target_pos = object_center_for_mode(
         target_obj, getattr(settings, "center_mode", 0)
     ) + center_offset_for_mode(settings)
@@ -1524,14 +1530,14 @@ class C4D2GSDialog(c4d.gui.GeDialog):
     # ------------------------------------------------------------------
 
     def CreateLayout(self):
-        self.SetTitle("C4D2GS  —  Postshot Dataset Generator  v{}".format(PLUGIN_VERSION))
+        self.SetTitle("C4D2GS  —  Synthetic COLMAP Data Generator  v{}".format(PLUGIN_VERSION))
 
         # ---- Action buttons (top strip) ----
         self.GroupBegin(_IDs.GRP_BUTTONS, c4d.BFH_SCALEFIT, cols=4, rows=1)
         self.GroupBorderSpace(6, 6, 6, 4)
         self.AddButton(_IDs.BTN_CREATE_RIG, c4d.BFH_SCALEFIT, name="  Create / Update Rig  ")
         self.AddButton(_IDs.BTN_EXECUTE, c4d.BFH_SCALEFIT, name="  Build & Export  ")
-        self.AddButton(_IDs.BTN_COLMAP_ONLY, c4d.BFH_SCALEFIT, name="  COLMAP Only  ")
+        self.AddButton(_IDs.BTN_COLMAP_ONLY, c4d.BFH_SCALEFIT, name="  Synthetic COLMAP Data Only  ")
         self.AddButton(_IDs.BTN_CLOSE, c4d.BFH_SCALEFIT, name="  Close  ")
         self.GroupEnd()
 
@@ -1698,11 +1704,11 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self.AddStaticText(3034, c4d.BFH_LEFT, name="<Output Path>/camera_poses.json")
         self.GroupEnd()
 
-        # Postshot COLMAP
+        # Synthetic COLMAP data
         self.GroupBegin(2042, c4d.BFH_SCALEFIT, cols=2,
-                        title="Postshot COLMAP", groupflags=c4d.BORDER_GROUP_IN)
+            title="Synthetic COLMAP Data", groupflags=c4d.BORDER_GROUP_IN)
         self.GroupBorderSpace(6, 4, 6, 4)
-        self.AddStaticText(3040, c4d.BFH_LEFT, name="Export COLMAP")
+        self.AddStaticText(3040, c4d.BFH_LEFT, name="Export Synthetic COLMAP Data")
         self.AddCheckbox(_IDs.EXPORT_COLMAP, c4d.BFH_LEFT, 0, 0, name="")
 
         self.AddStaticText(3041, c4d.BFH_LEFT, name="Auto Intrinsics from Cam")
@@ -2090,17 +2096,17 @@ class C4D2GSDialog(c4d.gui.GeDialog):
                 show_error_dialog(
                     ERROR_NO_OUTPUT_PATH,
                     "Output Path is empty.",
-                    "Choose a folder such as C:\\renders\\my_splat before exporting COLMAP."
+                    "Choose a folder such as C:\\renders\\my_splat before exporting synthetic COLMAP data."
                 )
                 return True
             self._target_obj = obj
-            self.SetString(_IDs.STATUS_TEXT, "Exporting COLMAP…")
+            self.SetString(_IDs.STATUS_TEXT, "Exporting synthetic COLMAP data…")
             try:
                 result = run_colmap_only(doc, self._settings, obj)
                 self._refresh_status()
                 _save_settings(self._settings)
                 c4d.gui.MessageDialog(
-                    "COLMAP export complete.\n\n"
+                    "Synthetic COLMAP data export complete.\n\n"
                     "Folder:  {}\n"
                     "Points:  {}\n"
                     "Intrinsics source:  {}\n"
@@ -2113,7 +2119,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
                 )
             except Exception as exc:
                 self._refresh_status()
-                show_error_dialog(ERROR_COLMAP_FAILED, "COLMAP export failed.", exc)
+                show_error_dialog(ERROR_COLMAP_FAILED, "Synthetic COLMAP data export failed.", exc)
             return True
 
         if cid == _IDs.BTN_CLOSE:
@@ -2151,7 +2157,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
             extra_str = ""
 
         msg_lines = [
-            "Dataset ready for Postshot!",
+            "Synthetic COLMAP data ready!",
             "",
             "Object:   {}".format(result.get("target_name", "?")),
             "Cameras:  {}  ({}{})".format(result.get("camera_count", 0), mode, extra_str),
@@ -2161,7 +2167,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
             msg_lines.append("Pose JSON:  {}".format(pose_file))
         if colmap:
             msg_lines += [
-                "COLMAP folder:  {}".format(colmap["dir"]),
+                "Synthetic COLMAP data folder:  {}".format(colmap["dir"]),
                 "Images folder:  {}".format(colmap.get("images_dir", os.path.join(colmap["dir"], "images"))),
                 "Sparse points:  {}".format(colmap["points_count"]),
                 "Intrinsics:     {}".format(colmap["intrinsics_source"]),
@@ -2169,7 +2175,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         msg_lines += [
             "",
             "Next step:  render the animation to produce the image sequence,",
-            "then import the COLMAP folder into Postshot.",
+            "then import the synthetic COLMAP data folder into your reconstruction app.",
         ]
         c4d.gui.MessageDialog("\n".join(msg_lines))
 

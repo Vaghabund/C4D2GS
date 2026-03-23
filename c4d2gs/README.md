@@ -1,17 +1,14 @@
 # C4D2GS — Cinema 4D to Gaussian Splat
 
-A Cinema 4D Python plugin that generates **Postshot-compatible datasets** for
-Gaussian Splatting.  It automates the whole capture-rig pipeline:
+A Cinema 4D Python plugin that generates synthetic COLMAP data for Gaussian Splatting.  
+It automates the whole capture-rig pipeline:
 
-1. Places a configurable sphere of cameras around any object in your scene.
-2. Sets up an **animated render camera** so rendering the animation produces
-   one image per viewpoint automatically.
-3. Writes **COLMAP files** (`cameras.txt`, `images.txt`, `points3D.txt`)
-   that Postshot uses to initialise its reconstruction.
-4. Optionally writes a **camera-pose JSON** with full intrinsics/extrinsics
-   for **nerfstudio / instant-ngp style pipelines**.
+1. Select target Object 
+2. insert Output Path
+3. build & export
+4. render!
 
----
+All in one solution for drag and drop of synthetic COLMAP data into any Gaussian Splatting editor of your choice.
 
 ## Installation
 
@@ -39,13 +36,13 @@ Gaussian Splatting.  It automates the whole capture-rig pipeline:
    between the object centre and the capture cameras.
 5. Set your **Output Path** in the *Output* section, for example
    `C:\renders\my_splat`. The plugin writes everything into that folder:
-   the COLMAP files (`cameras.txt`, `images.txt`, `points3D.txt`),
+   the synthetic COLMAP data files (`cameras.txt`, `images.txt`, `points3D.txt`),
    the pose file `camera_poses.json`, and rendered images in `images/gs_####`.
 6. Click **Build & Export**.
 7. Render the animation in Cinema 4D (`Render ▸ Render to Picture Viewer`, or
    use the Command Line Renderer for batch rendering).
-8. Import the output directory into Postshot (COLMAP files at root) and use
-   the `images/` sub-folder as the image sequence.
+8. Import the output directory into your reconstruction tool that supports synthetic COLMAP data
+   (synthetic COLMAP data files at root) and use the `images/` sub-folder as the image sequence.
 
 ---
 
@@ -70,7 +67,7 @@ and does not rely on Object Manager selection state.
 ### Output Section
 | Field | Description |
 |-------|-------------|
-| Output Path | Base path for all exports. The plugin writes `cameras.txt`, `images.txt`, `points3D.txt`, and `camera_poses.json` at root, plus rendered frames into `images/gs_####`. |
+| Output Path | Base path for all exports. The plugin writes synthetic COLMAP data files (`cameras.txt`, `images.txt`, `points3D.txt`) and `camera_poses.json` at root, plus rendered frames into `images/gs_####`. |
 | Format | Image format: PNG, JPG, TIF, or EXR. |
 | Resolution | Width × Height in pixels. |
 | FPS | Frames per second (affects timeline length only). |
@@ -83,25 +80,25 @@ and does not rely on Object Manager selection state.
 | Auto Update Rig | Automatically rebuilds the rig when you change rig-related parameters, for a faster iterative workflow. |
 | Export Pose JSON | Writes a `camera_poses.json` file with per-frame transform matrices and intrinsics. |
 | JSON Output | Written automatically as `<Output Path>/camera_poses.json`. |
-| Export COLMAP | Writes `cameras.txt`, `images.txt`, and `points3D.txt` for Postshot. |
+| Export Synthetic COLMAP Data | Writes synthetic COLMAP data files (`cameras.txt`, `images.txt`, `points3D.txt`) for tools that support synthetic COLMAP data. |
 | Auto Intrinsics from Cam | Derives `fx/fy/cx/cy` from the render camera's focal length and sensor width. |
 | Manual Intrinsics | Override values used when auto-intrinsics is off or unavailable. The plugin automatically selects `SIMPLE_PINHOLE` or `PINHOLE` from the effective focal parameters. |
-| Sparse Point Count | Number of surface sample points used to build the COLMAP sparse reconstruction (default: 30000, manually adjustable). |
+| Sparse Point Count | Number of surface sample points used to build the synthetic COLMAP data sparse reconstruction (default: 30000, manually adjustable). |
 
 ### Action Buttons
 | Button | Action |
 |--------|--------|
-| **Create / Update Rig** | Builds or rebuilds only the camera rig from current parameters (no JSON/COLMAP export), useful for iterative adjustments. |
+| **Create / Update Rig** | Builds or rebuilds only the camera rig from current parameters (no JSON/synthetic COLMAP data export), useful for iterative adjustments. |
 | **Build & Export** | Builds the full camera rig, configures render settings, and writes all selected export files. |
-| **COLMAP Only** | Re-exports just the COLMAP files using the current settings and the existing rig/intrinsics—useful after tweaking sparse-point count. |
+| **COLMAP Only** | Re-exports just the synthetic COLMAP data files using the current settings and the existing rig/intrinsics—useful after tweaking sparse-point count. |
 | **Close** | Closes the dialog (current settings are persisted and restored on next open/restart). |
 
 ---
 
-## Postshot Workflow
+## Example Workflow (Synthetic COLMAP Data)
 
 ```
-Cinema 4D                           Postshot
+Cinema 4D                           Reconstruction App
 ──────────────────────────────────  ─────────────────────────────────────
 1. Build & Export  ──────────────>  output folder/
                                       cameras.txt
@@ -110,8 +107,8 @@ Cinema 4D                           Postshot
                                       images/
 2. Render animation  ────────────>  images/gs_0000.png … images/gs_0119.png
 
-3. In Postshot:
-   File > New Project > COLMAP  <──  point at output folder
+3. In your reconstruction app:
+   Import synthetic COLMAP data project      <──  point at output folder
    and select output folder/images
 ```
 
@@ -129,7 +126,7 @@ C4D2GS exports:
       ...
 
    camera_poses.json <- for nerfstudio / instant-ngp style tools,
-                                  not required by Postshot
+                                  optional for COLMAP-based workflows
 ```
 
 ---
@@ -137,14 +134,14 @@ C4D2GS exports:
 ## Compatibility Notes
 
 - `points3D.txt` uses synthetic sparse points sampled from the target surface,
-   with synthetic image tracks intended for Postshot initialization.
+   with synthetic image tracks intended for robust COLMAP-style initialization.
 - Visibility filtering includes a surface-normal facing check, so backfacing
    points are excluded from camera observations.
 - Track observations are intentionally capped per point (instead of spanning all
    cameras) to stay closer to typical COLMAP visibility patterns.
 - Point colors are written as white (`255 255 255`) because C4D2GS exports
-   before image-based color sampling; Postshot and GS training optimize color
-   during reconstruction.
+   before image-based color sampling; downstream reconstruction/training tools
+   optimize color during reconstruction.
 - `camera_poses.json` uses NeRF-style `file_path` entries with relative image
    names for portability across machines.
 - The JSON `transform_matrix` is converted from Cinema 4D world space to the
