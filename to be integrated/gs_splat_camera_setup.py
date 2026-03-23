@@ -28,8 +28,8 @@ CREATE_ANIMATED_RENDER_CAMERA = True
 REPLACE_EXISTING_RIG = True
 EXPORT_CAMERA_POSES = True
 CAMERA_POSE_OUTPUT_PATH = r"C:\temp\gs_capture\camera_poses.json"
-EXPORT_POSTSHOT_COLMAP = True
-COLMAP_SUBFOLDER_NAME = "postshot_colmap"
+EXPORT_COLMAP_DATA = True
+COLMAP_SUBFOLDER_NAME = "colmap"
 AUTO_COLMAP_INTRINSICS_FROM_RENDER_CAMERA = True
 COLMAP_MODEL = "PINHOLE"  # SIMPLE_PINHOLE or PINHOLE
 COLMAP_FX_PX = 1500.0
@@ -168,7 +168,7 @@ def get_render_output_directory():
 
 def resolve_colmap_output_dir():
     render_dir = get_render_output_directory()
-    sub = COLMAP_SUBFOLDER_NAME.strip() or "postshot_colmap"
+    sub = COLMAP_SUBFOLDER_NAME.strip() or "colmap"
     if render_dir:
         return os.path.join(render_dir, sub)
 
@@ -622,19 +622,19 @@ def generate_sparse_points_from_object_surface(doc, target_obj):
     return out
 
 
-def export_colmap_for_postshot(world_points, target_pos, output_dir, render_cam=None, doc=None, target_obj=None):
+def export_colmap_data(world_points, target_pos, output_dir, render_cam=None, doc=None, target_obj=None):
     if not world_points:
         return None
 
     output_dir = normalize_output_dir(output_dir)
     if not output_dir:
-        raise ValueError("COLMAP output path is empty. Set a valid Render Output Path.")
+        raise ValueError("Synthetic COLMAP data output path is empty. Set a valid Render Output Path.")
 
     if not os.path.exists(output_dir):
         try:
             os.makedirs(output_dir)
         except Exception as exc:
-            raise ValueError("Could not create COLMAP output directory '{}': {}".format(output_dir, exc))
+            raise ValueError("Could not create synthetic COLMAP data output directory '{}': {}".format(output_dir, exc))
 
     cameras_txt = os.path.join(output_dir, "cameras.txt")
     images_txt = os.path.join(output_dir, "images.txt")
@@ -763,7 +763,7 @@ def export_colmap_for_postshot(world_points, target_pos, output_dir, render_cam=
     # Marker file helps to quickly spot the output folder in Explorer.
     marker = os.path.join(output_dir, "_exported_by_gs_camera_setup.txt")
     with open(marker, "w") as f:
-        f.write("COLMAP files exported by gs_splat_camera_setup.py\n")
+        f.write("Synthetic COLMAP data files exported by gs_splat_camera_setup.py\n")
 
     for required in [cameras_txt, images_txt, points3d_txt]:
         if not os.path.isfile(required):
@@ -773,7 +773,7 @@ def export_colmap_for_postshot(world_points, target_pos, output_dir, render_cam=
     at_least_1 = sum(1 for n in obs_per_point if n >= 1)
     at_least_2 = sum(1 for n in obs_per_point if n >= 2)
     debug_lines = [
-        "COLMAP export debug",
+            "Synthetic COLMAP data export debug",
         "source=object_surface",
         "sampled_points={}".format(len(sparse_points)),
         "valid_points_written={}".format(len(valid_points)),
@@ -1182,7 +1182,7 @@ class GSCameraSetupDialog(c4d.gui.GeDialog):
         self.GroupBegin(1999, c4d.BFH_SCALEFIT, cols=3, rows=1)
         self.GroupBorderSpace(8, 8, 8, 4)
         self.AddButton(self.ID_BUILD, c4d.BFH_SCALEFIT, name="Execute")
-        self.AddButton(self.ID_EXPORT_COLMAP_ONLY, c4d.BFH_SCALEFIT, name="Export COLMAP Only")
+        self.AddButton(self.ID_EXPORT_COLMAP_ONLY, c4d.BFH_SCALEFIT, name="Export Synthetic COLMAP Data Only")
         self.AddButton(self.ID_CLOSE, c4d.BFH_SCALEFIT, name="Close")
         self.GroupEnd()
 
@@ -1254,10 +1254,10 @@ class GSCameraSetupDialog(c4d.gui.GeDialog):
         self.AddButton(self.ID_JSON_PATH_BROWSE, c4d.BFH_RIGHT, name="Browse")
         self.GroupEnd()
 
-        self.AddStaticText(3017, c4d.BFH_LEFT, name="Export Postshot COLMAP")
+        self.AddStaticText(3017, c4d.BFH_LEFT, name="Export Synthetic COLMAP Data")
         self.AddCheckbox(self.ID_EXPORT_COLMAP, c4d.BFH_LEFT)
-        self.AddStaticText(3018, c4d.BFH_LEFT, name="COLMAP Destination")
-        self.AddStaticText(30180, c4d.BFH_LEFT, name="<Render Output Folder>/postshot_colmap")
+        self.AddStaticText(3018, c4d.BFH_LEFT, name="Synthetic COLMAP Data Destination")
+        self.AddStaticText(30180, c4d.BFH_LEFT, name="<Render Output Folder>/colmap")
 
         self.AddStaticText(3019, c4d.BFH_LEFT, name="Auto Intrinsics from Cam")
         self.AddCheckbox(self.ID_AUTO_INTRINSICS, c4d.BFH_LEFT)
@@ -1325,7 +1325,7 @@ class GSCameraSetupDialog(c4d.gui.GeDialog):
         self.SetBool(self.ID_REPLACE_RIG, bool(REPLACE_EXISTING_RIG))
         self.SetBool(self.ID_EXPORT_JSON, bool(EXPORT_CAMERA_POSES))
         self.SetString(self.ID_JSON_PATH, str(CAMERA_POSE_OUTPUT_PATH))
-        self.SetBool(self.ID_EXPORT_COLMAP, bool(EXPORT_POSTSHOT_COLMAP))
+        self.SetBool(self.ID_EXPORT_COLMAP, bool(EXPORT_COLMAP_DATA))
 
         self.SetBool(self.ID_AUTO_INTRINSICS, bool(AUTO_COLMAP_INTRINSICS_FROM_RENDER_CAMERA))
         self.SetInt32(self.ID_COLMAP_MODEL, 0 if COLMAP_MODEL.upper() == "PINHOLE" else 1)
@@ -1344,7 +1344,7 @@ class GSCameraSetupDialog(c4d.gui.GeDialog):
         global OUTPUT_PATH, OUTPUT_FORMAT, RESOLUTION_X, RESOLUTION_Y, FPS
         global CREATE_ANIMATED_RENDER_CAMERA, REPLACE_EXISTING_RIG
         global EXPORT_CAMERA_POSES, CAMERA_POSE_OUTPUT_PATH
-        global EXPORT_POSTSHOT_COLMAP
+        global EXPORT_COLMAP_DATA
         global AUTO_COLMAP_INTRINSICS_FROM_RENDER_CAMERA
         global COLMAP_MODEL, COLMAP_FX_PX, COLMAP_FY_PX, COLMAP_CX_PX, COLMAP_CY_PX
         global COLMAP_SPARSE_POINT_COUNT, COLMAP_SPARSE_POINT_RADIUS_FACTOR
@@ -1381,7 +1381,7 @@ class GSCameraSetupDialog(c4d.gui.GeDialog):
         EXPORT_CAMERA_POSES = bool(self.GetBool(self.ID_EXPORT_JSON))
         CAMERA_POSE_OUTPUT_PATH = self.GetString(self.ID_JSON_PATH).strip()
 
-        EXPORT_POSTSHOT_COLMAP = bool(self.GetBool(self.ID_EXPORT_COLMAP))
+        EXPORT_COLMAP_DATA = bool(self.GetBool(self.ID_EXPORT_COLMAP))
 
         AUTO_COLMAP_INTRINSICS_FROM_RENDER_CAMERA = bool(self.GetBool(self.ID_AUTO_INTRINSICS))
         model_id = int(self.GetInt32(self.ID_COLMAP_MODEL))
@@ -1425,7 +1425,7 @@ class GSCameraSetupDialog(c4d.gui.GeDialog):
             try:
                 export_colmap_only(target_obj_override=TARGET_OBJECT_LINK)
             except Exception as exc:
-                c4d.gui.MessageDialog("COLMAP export failed: {}".format(exc))
+                c4d.gui.MessageDialog("Synthetic COLMAP data export failed: {}".format(exc))
             return True
 
         if cid == self.ID_CLOSE:
@@ -1543,10 +1543,10 @@ def main(doc=None, force_run=False, target_obj_override=None):
                 render_cam=render_cam
             )
 
-        postshot_colmap = None
-        if EXPORT_POSTSHOT_COLMAP:
+        colmap_export = None
+        if EXPORT_COLMAP_DATA:
             colmap_dir = resolve_colmap_output_dir()
-            postshot_colmap = export_colmap_for_postshot(
+            colmap_export = export_colmap_data(
                 world_points,
                 target_pos,
                 colmap_dir,
@@ -1563,10 +1563,10 @@ def main(doc=None, force_run=False, target_obj_override=None):
             "Sampling mode: {}{}\n"
             "Render settings configured for {} frames.\n"
             "Camera pose export: {}\n"
-            "Postshot COLMAP export: {}\n"
+            "Synthetic COLMAP data export: {}\n"
             "Sparse point source: {}\n"
-            "COLMAP intrinsics source: {}\n"
-            "COLMAP debug report: {}\n"
+            "Synthetic COLMAP data intrinsics source: {}\n"
+            "Synthetic COLMAP data debug report: {}\n"
             "Now render animation to output image sequence.".format(
                 len(world_points),
                 target_obj.GetName(),
@@ -1575,10 +1575,10 @@ def main(doc=None, force_run=False, target_obj_override=None):
                 else " (turns: {:.2f})".format(SPIRAL_TURNS) if mode_used == "spiral" else "",
                 len(world_points),
                 pose_file if pose_file else "disabled",
-                postshot_colmap["dir"] if postshot_colmap else "disabled",
-                postshot_colmap["points_source"] if postshot_colmap else "n/a",
-                postshot_colmap["intrinsics_source"] if postshot_colmap else "n/a",
-                postshot_colmap["debug_report"] if postshot_colmap else "n/a"
+                colmap_export["dir"] if colmap_export else "disabled",
+                colmap_export["points_source"] if colmap_export else "n/a",
+                colmap_export["intrinsics_source"] if colmap_export else "n/a",
+                colmap_export["debug_report"] if colmap_export else "n/a"
             )
         )
 
@@ -1599,7 +1599,7 @@ def export_colmap_only(doc=None, target_obj_override=None):
 
     target_obj = get_target_object(doc, target_obj_override=target_obj_override)
     if target_obj is None:
-        c4d.gui.MessageDialog("Select or link the target object before exporting COLMAP.")
+        c4d.gui.MessageDialog("Select or link the target object before exporting synthetic COLMAP data.")
         return
 
     target_pos = center_of_object(target_obj) + SPHERE_CENTER_OFFSET
@@ -1624,7 +1624,7 @@ def export_colmap_only(doc=None, target_obj_override=None):
                 render_cam = scene_cam
 
     colmap_dir = resolve_colmap_output_dir()
-    postshot_colmap = export_colmap_for_postshot(
+    colmap_export = export_colmap_data(
         world_points,
         target_pos,
         colmap_dir,
@@ -1634,7 +1634,7 @@ def export_colmap_only(doc=None, target_obj_override=None):
     )
 
     c4d.gui.MessageDialog(
-        "Exported COLMAP poses only.\n"
+        "Exported synthetic COLMAP data poses only.\n"
         "Sampling mode: {}{}\n"
         "Images listed: {}\n"
         "Sparse points: {}\n"
@@ -1649,14 +1649,14 @@ def export_colmap_only(doc=None, target_obj_override=None):
             " (subdivisions: {})".format(subdivisions) if mode_used == "icosphere"
             else " (turns: {:.2f})".format(SPIRAL_TURNS) if mode_used == "spiral" else "",
             len(world_points),
-            postshot_colmap["points_count"] if postshot_colmap else 0,
-            postshot_colmap["points_source"] if postshot_colmap else "n/a",
-            postshot_colmap["dir"] if postshot_colmap else "n/a",
-            postshot_colmap["cameras_txt"] if postshot_colmap else "n/a",
-            postshot_colmap["images_txt"] if postshot_colmap else "n/a",
-            postshot_colmap["points3d_txt"] if postshot_colmap else "n/a",
-            postshot_colmap["debug_report"] if postshot_colmap else "n/a",
-            postshot_colmap["intrinsics_source"] if postshot_colmap else "n/a",
+            colmap_export["points_count"] if colmap_export else 0,
+            colmap_export["points_source"] if colmap_export else "n/a",
+            colmap_export["dir"] if colmap_export else "n/a",
+            colmap_export["cameras_txt"] if colmap_export else "n/a",
+            colmap_export["images_txt"] if colmap_export else "n/a",
+            colmap_export["points3d_txt"] if colmap_export else "n/a",
+            colmap_export["debug_report"] if colmap_export else "n/a",
+            colmap_export["intrinsics_source"] if colmap_export else "n/a",
         )
     )
 
