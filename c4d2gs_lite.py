@@ -1,6 +1,6 @@
 """
-C4D2GS Light — Cinema 4D Script (no UI)
-========================================
+C4D2GS Lite — Cinema 4D Script (no UI)
+=======================================
 A single-script, parameter-only version of the C4D2GS plugin.
 
 Usage
@@ -121,22 +121,18 @@ def _copy_matrix(mg):
     return out
 
 
-def spiral_sphere_points(count, turns=6.0, pole_margin=0.06):
-    """Return *count* unit-sphere points arranged along a spiral."""
+def fibonacci_sphere_points(count):
+    """Return *count* roughly-evenly-spaced unit vectors on a sphere (Fibonacci lattice)."""
     if count <= 0:
         return []
-    if count == 1:
-        return [c4d.Vector(0, 1, 0)]
-    margin = max(0.0, min(0.49, float(pole_margin)))
-    y_top = 1.0 - 2.0 * margin
-    y_bottom = -y_top
+    golden_angle = math.pi * (3.0 - math.sqrt(5.0))
     points = []
     for i in range(count):
-        t = i / float(count - 1)
-        y = y_top + (y_bottom - y_top) * t
-        ring_r = math.sqrt(max(0.0, 1.0 - y * y))
-        theta = 2.0 * math.pi * turns * t
-        points.append(c4d.Vector(math.cos(theta) * ring_r, y, math.sin(theta) * ring_r))
+        # max(1, count-1) avoids division by zero when count == 1
+        y = 1.0 - (2.0 * i) / float(max(1, count - 1))
+        radius = max(0.0, 1.0 - y * y) ** 0.5
+        theta = golden_angle * i
+        points.append(c4d.Vector(math.sin(theta) * radius, y, math.cos(theta) * radius))
     return points
 
 
@@ -196,36 +192,26 @@ def rotation_matrix_to_quaternion(r):
 def c2w_to_colmap_extrinsics(mg):
     """Convert a C4D camera-to-world matrix to COLMAP extrinsics (q, t, R_w2c).
 
-    Matches the published COLMAP importer: two Y flips (world and camera-local),
-    no Z flip.
+    Applies S = diag(1, -1, -1):
+      R_w2c rows = [ xw, -yw, -zw ]
+      t = -R_w2c * camera_centre
+
+    C4D camera frame: +X right, +Y up, +Z backward (looks down -Z).
+    COLMAP/OpenCV frame: +X right, +Y down, +Z forward.
     """
-    flip_y = c4d.Matrix()
-    flip_y.v1  = c4d.Vector(1,  0, 0)
-    flip_y.v2  = c4d.Vector(0, -1, 0)
-    flip_y.v3  = c4d.Vector(0,  0, 1)
-    flip_y.off = c4d.Vector(0,  0, 0)
+    xw = mg.v1   # local +X in world space
+    yw = mg.v2   # local +Y in world space
+    zw = mg.v3   # local +Z in world space (backward)
+    c  = mg.off  # camera centre
 
-    mg1 = mg * flip_y  # undo camera-local Y flip
-
-    def _apply_flip_y(mat):
-        out = c4d.Matrix()
-        out.v1  = c4d.Vector(mat.v1.x,  -mat.v1.y,  mat.v1.z)
-        out.v2  = c4d.Vector(mat.v2.x,  -mat.v2.y,  mat.v2.z)
-        out.v3  = c4d.Vector(mat.v3.x,  -mat.v3.y,  mat.v3.z)
-        out.off = c4d.Vector(mat.off.x, -mat.off.y, mat.off.z)
-        return out
-
-    mg2 = _apply_flip_y(mg1)  # undo world Y flip
-
-    c_pos = mg2.off
     r_w2c = [
-        [mg2.v1.x, mg2.v1.y, mg2.v1.z],
-        [mg2.v2.x, mg2.v2.y, mg2.v2.z],
-        [mg2.v3.x, mg2.v3.y, mg2.v3.z],
+        [ xw.x,  xw.y,  xw.z],   # row 0: unchanged  (X right → X right)
+        [-yw.x, -yw.y, -yw.z],   # row 1: negated     (C4D up  → COLMAP down)
+        [-zw.x, -zw.y, -zw.z],   # row 2: negated     (C4D back → COLMAP forward)
     ]
-    tx = -(r_w2c[0][0] * c_pos.x + r_w2c[0][1] * c_pos.y + r_w2c[0][2] * c_pos.z)
-    ty = -(r_w2c[1][0] * c_pos.x + r_w2c[1][1] * c_pos.y + r_w2c[1][2] * c_pos.z)
-    tz = -(r_w2c[2][0] * c_pos.x + r_w2c[2][1] * c_pos.y + r_w2c[2][2] * c_pos.z)
+    tx = -(r_w2c[0][0] * c.x + r_w2c[0][1] * c.y + r_w2c[0][2] * c.z)
+    ty = -(r_w2c[1][0] * c.x + r_w2c[1][1] * c.y + r_w2c[1][2] * c.z)
+    tz = -(r_w2c[2][0] * c.x + r_w2c[2][1] * c.y + r_w2c[2][2] * c.z)
     qw, qx, qy, qz = rotation_matrix_to_quaternion(r_w2c)
     return (qw, qx, qy, qz), (tx, ty, tz), r_w2c
 
@@ -234,40 +220,30 @@ def project_world_to_image(mg, world_point, world_normal, fx, fy, cx, cy,
                             require_front_facing=True):
     """Project a world-space point onto the image plane.
 
-    Mirrors the importer pipeline (invert two Y flips, no Z flip).
+    Uses C4D camera-local space directly:
+      local = (~mg) * world_point
+      C4D camera looks down -Z, so local.z < 0 means the point is in front.
+      depth  = -local.z
+      u = fx * (local.x  / depth) + cx
+      v = fy * (-local.y / depth) + cy   (negate Y: C4D up → COLMAP/image down)
+
     Returns (u, v) or None if behind camera / back-facing.
     """
-    flip_y = c4d.Matrix()
-    flip_y.v1 = c4d.Vector(1, 0, 0); flip_y.v2 = c4d.Vector(0, -1, 0)
-    flip_y.v3 = c4d.Vector(0, 0, 1); flip_y.off = c4d.Vector(0,  0, 0)
-
-    def _flip_y_mat(mat):
-        out = c4d.Matrix()
-        out.v1  = c4d.Vector(mat.v1.x,  -mat.v1.y,  mat.v1.z)
-        out.v2  = c4d.Vector(mat.v2.x,  -mat.v2.y,  mat.v2.z)
-        out.v3  = c4d.Vector(mat.v3.x,  -mat.v3.y,  mat.v3.z)
-        out.off = c4d.Vector(mat.off.x, -mat.off.y, mat.off.z)
-        return out
-
-    def _flip_y_vec(v):
-        return c4d.Vector(v.x, -v.y, v.z)
-
-    mg2 = _flip_y_mat(mg * flip_y)         # c2w in COLMAP frame
-    p_col = _flip_y_vec(world_point)        # world → COLMAP frame
-
+    # Optional front-facing cull in C4D world space.
     if world_normal is not None and require_front_facing:
-        n_col = _flip_y_vec(world_normal)
-        to_cam_col = _normalize(mg2.off - p_col)
-        if _dot(to_cam_col, n_col) <= 0.0:
+        to_cam = _normalize(mg.off - world_point)
+        if _dot(to_cam, world_normal) <= 0.0:
             return None
 
-    local = (~mg2) * p_col
-    x_cv = local.x
-    y_cv = local.y   # already Y-down after flip
-    z_cv = local.z   # forward in COLMAP frame
-    if z_cv <= 1e-6:
+    local = (~mg) * world_point
+    # C4D camera looks down -Z; use -1e-6 threshold to reject grazing depths.
+    if local.z >= -1e-6:
         return None
-    return (fx * (x_cv / z_cv)) + cx, (fy * (y_cv / z_cv)) + cy
+
+    depth = -local.z
+    u = (fx * ( local.x / depth)) + cx
+    v = (fy * (-local.y / depth)) + cy   # negate Y: C4D up → image down
+    return u, v
 
 
 def _cap_observations(candidates, max_count):
@@ -1000,25 +976,31 @@ def _configure_render_settings(doc, render_cam, frame_count):
 def main():
     doc = c4d.documents.GetActiveDocument()
     if doc is None:
-        c4d.gui.MessageDialog("C4D2GS Light: No active document found.")
+        c4d.gui.MessageDialog("C4D2GS Lite: No active document found.")
         return
 
     target_obj = doc.GetActiveObject()
     if target_obj is None:
         c4d.gui.MessageDialog(
-            "C4D2GS Light: No object selected.\n"
+            "C4D2GS Lite: No object selected.\n"
             "Please select the object you want to capture and run the script again.")
         return
 
     if not OUTPUT_PATH.strip():
         c4d.gui.MessageDialog(
-            "C4D2GS Light: OUTPUT_PATH is empty.\n"
+            "C4D2GS Lite: OUTPUT_PATH is empty.\n"
             "Edit the OUTPUT_PATH parameter at the top of the script and run again.")
+        return
+
+    if CAMERA_COUNT < 1:
+        c4d.gui.MessageDialog(
+            "C4D2GS Lite: CAMERA_COUNT must be >= 1.\n"
+            "Edit the CAMERA_COUNT parameter at the top of the script and run again.")
         return
 
     out_folder = _output_folder()
     if not out_folder:
-        c4d.gui.MessageDialog("C4D2GS Light: Could not resolve OUTPUT_PATH.")
+        c4d.gui.MessageDialog("C4D2GS Lite: Could not resolve OUTPUT_PATH.")
         return
 
     target_pos = center_of_object(target_obj)
@@ -1050,8 +1032,8 @@ def main():
         target_null.SetAbsPos(target_pos)
         doc.AddUndo(c4d.UNDOTYPE_NEWOBJ, target_null)
 
-        # Generate viewpoint positions on the sphere
-        unit_pts  = spiral_sphere_points(CAMERA_COUNT)
+        # Generate viewpoint positions on the sphere (Fibonacci distribution)
+        unit_pts  = fibonacci_sphere_points(CAMERA_COUNT)
         world_pts = [target_pos + p * SPHERE_RADIUS for p in unit_pts]
 
         # Static reference cameras (one per viewpoint)
@@ -1108,9 +1090,9 @@ def main():
     # Exports (outside undo block)
     # ------------------------------------------------------------------
     errors   = []
-    messages = ["C4D2GS Light — done.", ""]
+    messages = ["C4D2GS Lite — done.", ""]
     messages.append("Target : {}".format(target_obj.GetName()))
-    messages.append("Cameras: {}  (spiral)".format(len(world_pts)))
+    messages.append("Cameras: {}  (Fibonacci sphere)".format(len(world_pts)))
     messages.append("Output : {}".format(out_folder))
 
     if EXPORT_CAMERA_POSES_JSON:
