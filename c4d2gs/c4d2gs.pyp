@@ -70,7 +70,7 @@ _DEFAULTS = dict(
     spiral_pole_margin=0.06,
     output_path=os.path.join(os.path.expanduser("~"), "Documents",
                              "gs_capture"),
-    output_format=1023671,     # c4d.FILTER_PNG; overridden at runtime in Settings.__init__
+    output_format=getattr(c4d, "FILTER_PNG", 1023671),  # c4d.FILTER_PNG; overridden at runtime in Settings.__init__
     res_x=1920,
     res_y=1080,
     fps=30,
