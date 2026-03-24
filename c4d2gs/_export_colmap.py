@@ -92,12 +92,12 @@ def export_colmap(settings, world_points, target_pos, output_dir,
                 mg = camera_matrices[i]
             else:
                 mg = look_at_matrix(world_pos, target_pos)
-            q, t, r_w2c = c2w_to_colmap_extrinsics(mg)
+            _, t, r_w2c = c2w_to_colmap_extrinsics(mg)
             image_name = os.path.basename(_frame_image_path(settings, i))
             entries.append({
                 "image_id": i + 1,
                 "name": image_name,
-                "q": q, "t": t, "r_w2c": r_w2c, "mg": mg, "obs": [],
+                "t": t, "r_w2c": r_w2c, "mg": mg, "obs": [],
             })
         return entries
 

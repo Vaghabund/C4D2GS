@@ -233,6 +233,31 @@ def _cap_observations(candidates, max_count):
 # COLMAP coordinate conversion
 # ---------------------------------------------------------------------------
 
+# Module-level constant: the Y-flip matrix used for C4D→COLMAP conversion.
+# Built once here and reused by both c2w_to_colmap_extrinsics and
+# project_world_to_image, avoiding per-call allocation in the inner loop.
+_FLIP_Y = c4d.Matrix()
+_FLIP_Y.v1 = c4d.Vector(1,  0, 0)
+_FLIP_Y.v2 = c4d.Vector(0, -1, 0)
+_FLIP_Y.v3 = c4d.Vector(0,  0, 1)
+_FLIP_Y.off = c4d.Vector(0,  0, 0)
+
+
+def _apply_flip_y_mat(mat):
+    """Return a copy of *mat* with Y components negated (basis rows + position)."""
+    out = c4d.Matrix()
+    out.v1 = c4d.Vector(mat.v1.x, -mat.v1.y, mat.v1.z)
+    out.v2 = c4d.Vector(mat.v2.x, -mat.v2.y, mat.v2.z)
+    out.v3 = c4d.Vector(mat.v3.x, -mat.v3.y, mat.v3.z)
+    out.off = c4d.Vector(mat.off.x, -mat.off.y, mat.off.z)
+    return out
+
+
+def _apply_flip_y_vec(v):
+    """Return *v* with the Y component negated."""
+    return c4d.Vector(v.x, -v.y, v.z)
+
+
 def rotation_matrix_to_quaternion(r):
     trace = r[0][0] + r[1][1] + r[2][2]
     if trace > 0.0:
@@ -255,23 +280,8 @@ def c2w_to_colmap_extrinsics(mg):
     #   1) Undo camera-local flip: mg1 = mg * diag(1, -1, 1)
     #   2) Undo world flip:      mg2 = diag(1, -1, 1) * mg1 (apply to basis + position)
     #   3) mg2 is COLMAP c2w; R_w2c = transpose(mg2); t = -R * C
-    flip_y = c4d.Matrix()
-    flip_y.v1 = c4d.Vector(1, 0, 0)
-    flip_y.v2 = c4d.Vector(0,-1, 0)
-    flip_y.v3 = c4d.Vector(0, 0, 1)
-    flip_y.off = c4d.Vector(0, 0, 0)
-
-    mg1 = mg * flip_y  # undo camera-local Y flip
-
-    def _apply_flip_y(mat):
-        out = c4d.Matrix()
-        out.v1 = c4d.Vector(mat.v1.x, -mat.v1.y, mat.v1.z)
-        out.v2 = c4d.Vector(mat.v2.x, -mat.v2.y, mat.v2.z)
-        out.v3 = c4d.Vector(mat.v3.x, -mat.v3.y, mat.v3.z)
-        out.off = c4d.Vector(mat.off.x, -mat.off.y, mat.off.z)
-        return out
-
-    mg2 = _apply_flip_y(mg1)  # undo world Y flip
+    mg1 = mg * _FLIP_Y              # undo camera-local Y flip
+    mg2 = _apply_flip_y_mat(mg1)    # undo world Y flip
 
     c_pos = mg2.off
     r_w2c = [
@@ -290,24 +300,8 @@ def c2w_to_colmap_extrinsics(mg):
 def project_world_to_image(mg, world_point, world_normal, fx, fy, cx, cy,
                            require_front_facing=True):
     # Mirror importer pipeline (invert two Y flips, no Z flip) for projection.
-    flip_y = c4d.Matrix()
-    flip_y.v1 = c4d.Vector(1, 0, 0)
-    flip_y.v2 = c4d.Vector(0, -1, 0)
-    flip_y.v3 = c4d.Vector(0, 0, 1)
-    flip_y.off = c4d.Vector(0, 0, 0)
-
-    def _apply_flip_y_vec(v):
-        return c4d.Vector(v.x, -v.y, v.z)
-
-    def _apply_flip_y_mat(mat):
-        out = c4d.Matrix()
-        out.v1 = c4d.Vector(mat.v1.x, -mat.v1.y, mat.v1.z)
-        out.v2 = c4d.Vector(mat.v2.x, -mat.v2.y, mat.v2.z)
-        out.v3 = c4d.Vector(mat.v3.x, -mat.v3.y, mat.v3.z)
-        out.off = c4d.Vector(mat.off.x, -mat.off.y, mat.off.z)
-        return out
-
-    mg1 = mg * flip_y
+    # Uses module-level _FLIP_Y, _apply_flip_y_mat and _apply_flip_y_vec.
+    mg1 = mg * _FLIP_Y
     mg2 = _apply_flip_y_mat(mg1)  # c2w in COLMAP frame
 
     p_col = _apply_flip_y_vec(world_point)  # world → COLMAP

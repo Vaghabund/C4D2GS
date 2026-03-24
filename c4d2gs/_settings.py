@@ -45,8 +45,6 @@ _DEFAULTS = dict(
     replace_rig=True,
     auto_update_rig=False,
     export_json=True,
-    json_path=os.path.join(os.path.expanduser("~"), "Documents",
-                           "gs_capture", "camera_poses.json"),
     export_colmap=True,
     auto_intrinsics=True,
     fx=1500.0,

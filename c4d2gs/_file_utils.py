@@ -9,8 +9,6 @@ loaded first without circular-import risk.
 import os
 import c4d
 
-from _constants import NUMERIC_CLEAN_EPS
-
 
 def _normalize_path(path):
     p = os.path.expandvars(os.path.expanduser(str(path).strip()))
