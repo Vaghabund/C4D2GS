@@ -1,1 +1,33 @@
+## Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+## Tests
 tests/__pycache__/
+
+## OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+## Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+## Cinema 4D
+*.c4d.bak
+*.c4d~
+res/
+
+## Build / temp
+*.log
+*.tmp

@@ -277,7 +277,7 @@ def add_matrix_on_sparse_vertices(doc, sparse_obj, parent=None):
         return None
 
     mtx = c4d.BaseObject(c4d.Omgmatrix)
-    mtx.SetName("SparceCloud_Matrix_Previs")
+    mtx.SetName("SparseCloud_Matrix_Previs")
     (mtx.InsertUnder(parent) if parent else doc.InsertObject(mtx))
 
     def DID(i, dtype, creator):
@@ -640,7 +640,7 @@ class ImportDialog(gui.GeDialog):
             "Scene import successful\n"
             f"Resolution: {res_text}\n"
             f"Duration: {n} frames\n"
-            "To visualise the point cloud, select the 'SparceCloud_Matrix_Previs' object and set Distribution to Vertex."
+            "To visualise the point cloud, select the 'SparseCloud_Matrix_Previs' object and set Distribution to Vertex."
         )
 
 # ------------------------ Main ------------------------
