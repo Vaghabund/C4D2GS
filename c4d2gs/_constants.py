@@ -1,0 +1,38 @@
+"""
+C4D2GS — Plugin-wide constants.
+
+All numeric IDs, error codes, and configuration limits live here so that
+every sub-module can import them without pulling in the full plugin module.
+"""
+
+# ---------------------------------------------------------------------------
+# Plugin registration
+# ---------------------------------------------------------------------------
+
+PLUGIN_ID = 1067868
+PLUGIN_NAME = "C4D2GS"
+PLUGIN_HELP = "Generate synthetic COLMAP data for Gaussian Splat workflows in Cinema 4D"
+PLUGIN_VERSION = "1.0.0"
+
+# ---------------------------------------------------------------------------
+# Error codes
+# ---------------------------------------------------------------------------
+
+ERROR_NO_DOCUMENT = "C4D2GS-E001"
+ERROR_NO_TARGET = "C4D2GS-E002"
+ERROR_NO_OUTPUT_PATH = "C4D2GS-E003"
+ERROR_BUILD_FAILED = "C4D2GS-E100"
+ERROR_COLMAP_FAILED = "C4D2GS-E200"
+
+# ---------------------------------------------------------------------------
+# Numeric / UI limits
+# ---------------------------------------------------------------------------
+
+RADIUS_MIN = 0.0
+RADIUS_MAX = 1000.0
+PERSIST_KEY_JSON = 1
+NUMERIC_CLEAN_EPS = 1e-10
+MAX_TRACK_OBS_PER_POINT = 12
+
+# Redshift RSCamera plugin object type ID
+RS_CAMERA_TYPE_ID = 1057516
