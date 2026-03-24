@@ -529,7 +529,9 @@ def generate_sparse_points_in_core_volume(target_obj, target_pos, count=256,
     core_radius = max(1.0, base_radius * max(0.05, float(radius_factor)))
     out = []
     for _ in range(count):
-        u = random.random(); v = random.random(); w = random.random()
+        u = random.random()
+        v = random.random()
+        w = random.random()
         theta = 2.0 * math.pi * u
         phi = math.acos(max(-1.0, min(1.0, 2.0 * v - 1.0)))
         r = core_radius * (w ** (1.0 / 3.0))
@@ -665,7 +667,7 @@ def export_camera_poses_json(world_points, target_pos, render_cam=None,
     out_dir  = os.path.dirname(out_path)
     if out_dir and not os.path.exists(out_dir):
         os.makedirs(out_dir)
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
     return out_path
 
@@ -676,7 +678,7 @@ def export_camera_poses_json(world_points, target_pos, render_cam=None,
 
 def _write_cameras_txt(path, intrinsics):
     model = str(intrinsics["model"]).strip().upper()
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("# Camera list with one line of data per camera:\n")
         f.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
         f.write("# Number of cameras: 1\n")
@@ -844,7 +846,7 @@ def export_colmap_data(world_points, target_pos, doc, target_obj,
     # ------------------------------------------------------------------
     # Write images.txt
     # ------------------------------------------------------------------
-    with open(images_txt, "w") as f:
+    with open(images_txt, "w", encoding="utf-8") as f:
         f.write("# Image list with two lines of data per image:\n")
         f.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
         f.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
@@ -879,7 +881,7 @@ def export_colmap_data(world_points, target_pos, doc, target_obj,
             "fallback_volume={}".format(fallback_volume),
         ]
         report = os.path.join(output_dir, "colmap_debug.txt")
-        with open(report, "w") as f:
+        with open(report, "w", encoding="utf-8") as f:
             f.write("\n".join(debug) + "\n")
         raise ValueError(
             "No sparse point had >= 1 observation after visibility checks.  "
@@ -889,7 +891,7 @@ def export_colmap_data(world_points, target_pos, doc, target_obj,
     # ------------------------------------------------------------------
     # Write points3D.txt
     # ------------------------------------------------------------------
-    with open(points3d_txt, "w") as f:
+    with open(points3d_txt, "w", encoding="utf-8") as f:
         f.write("# 3D point list with one line of data per point:\n")
         f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[]\n")
         f.write("# Number of points: {}\n".format(len(valid_points)))
