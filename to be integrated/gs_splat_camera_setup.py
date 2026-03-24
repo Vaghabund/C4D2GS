@@ -1182,7 +1182,7 @@ class GSCameraSetupDialog(c4d.gui.GeDialog):
         self.GroupBegin(1999, c4d.BFH_SCALEFIT, cols=3, rows=1)
         self.GroupBorderSpace(8, 8, 8, 4)
         self.AddButton(self.ID_BUILD, c4d.BFH_SCALEFIT, name="Execute")
-        self.AddButton(self.ID_EXPORT_COLMAP_ONLY, c4d.BFH_SCALEFIT, name="Export Synthetic COLMAP Data Only")
+        self.AddButton(self.ID_EXPORT_COLMAP_ONLY, c4d.BFH_SCALEFIT, name="Export COLMAP")
         self.AddButton(self.ID_CLOSE, c4d.BFH_SCALEFIT, name="Close")
         self.GroupEnd()
 
@@ -1205,13 +1205,6 @@ class GSCameraSetupDialog(c4d.gui.GeDialog):
 
         self.AddStaticText(3001, c4d.BFH_LEFT, name="Sphere Radius")
         self.AddEditNumberArrows(self.ID_RADIUS, c4d.BFH_SCALEFIT)
-
-        self.AddStaticText(3002, c4d.BFH_LEFT, name="Center Offset X")
-        self.AddEditNumberArrows(self.ID_CENTER_X, c4d.BFH_SCALEFIT)
-        self.AddStaticText(3003, c4d.BFH_LEFT, name="Center Offset Y")
-        self.AddEditNumberArrows(self.ID_CENTER_Y, c4d.BFH_SCALEFIT)
-        self.AddStaticText(3004, c4d.BFH_LEFT, name="Center Offset Z")
-        self.AddEditNumberArrows(self.ID_CENTER_Z, c4d.BFH_SCALEFIT)
 
         self.AddStaticText(3005, c4d.BFH_LEFT, name="Sampling Mode")
         self.AddComboBox(self.ID_SAMPLING_MODE, c4d.BFH_SCALEFIT)
@@ -1259,22 +1252,10 @@ class GSCameraSetupDialog(c4d.gui.GeDialog):
         self.AddStaticText(3018, c4d.BFH_LEFT, name="Synthetic COLMAP Data Destination")
         self.AddStaticText(30180, c4d.BFH_LEFT, name="<Render Output Folder>/colmap")
 
-        self.AddStaticText(3019, c4d.BFH_LEFT, name="Auto Intrinsics from Cam")
-        self.AddCheckbox(self.ID_AUTO_INTRINSICS, c4d.BFH_LEFT)
-
         self.AddStaticText(3020, c4d.BFH_LEFT, name="COLMAP Model")
         self.AddComboBox(self.ID_COLMAP_MODEL, c4d.BFH_SCALEFIT)
         for model_id, model_name in get_colmap_model_items():
             self.AddChild(self.ID_COLMAP_MODEL, model_id, model_name)
-
-        self.AddStaticText(3021, c4d.BFH_LEFT, name="fx")
-        self.AddEditNumberArrows(self.ID_FX, c4d.BFH_SCALEFIT)
-        self.AddStaticText(3022, c4d.BFH_LEFT, name="fy")
-        self.AddEditNumberArrows(self.ID_FY, c4d.BFH_SCALEFIT)
-        self.AddStaticText(3023, c4d.BFH_LEFT, name="cx")
-        self.AddEditNumberArrows(self.ID_CX, c4d.BFH_SCALEFIT)
-        self.AddStaticText(3024, c4d.BFH_LEFT, name="cy")
-        self.AddEditNumberArrows(self.ID_CY, c4d.BFH_SCALEFIT)
 
         self.AddStaticText(3025, c4d.BFH_LEFT, name="Sparse Point Count")
         self.AddEditNumberArrows(self.ID_SPARSE_COUNT, c4d.BFH_SCALEFIT)
@@ -1306,9 +1287,8 @@ class GSCameraSetupDialog(c4d.gui.GeDialog):
 
         self._set_int_value(self.ID_CAM_COUNT, CAMERA_COUNT, 1, 1000000)
         self._set_float_value(self.ID_RADIUS, SPHERE_RADIUS, 0.000001, 1000000000.0, 1.0)
-        self._set_float_value(self.ID_CENTER_X, SPHERE_CENTER_OFFSET.x, -1000000000.0, 1000000000.0, 1.0)
-        self._set_float_value(self.ID_CENTER_Y, SPHERE_CENTER_OFFSET.y, -1000000000.0, 1000000000.0, 1.0)
-        self._set_float_value(self.ID_CENTER_Z, SPHERE_CENTER_OFFSET.z, -1000000000.0, 1000000000.0, 1.0)
+        # Force axis center with no offset
+        SPHERE_CENTER_OFFSET = c4d.Vector(0.0, 0.0, 0.0)
 
         mode_lookup = {"spiral": 0, "icosphere": 1, "fibonacci": 2}
         self.SetInt32(self.ID_SAMPLING_MODE, mode_lookup.get(SAMPLING_MODE.lower(), 0))
@@ -1327,12 +1307,9 @@ class GSCameraSetupDialog(c4d.gui.GeDialog):
         self.SetString(self.ID_JSON_PATH, str(CAMERA_POSE_OUTPUT_PATH))
         self.SetBool(self.ID_EXPORT_COLMAP, bool(EXPORT_COLMAP_DATA))
 
-        self.SetBool(self.ID_AUTO_INTRINSICS, bool(AUTO_COLMAP_INTRINSICS_FROM_RENDER_CAMERA))
+        # Always auto intrinsics on (no manual control in UI)
+        AUTO_COLMAP_INTRINSICS_FROM_RENDER_CAMERA = True
         self.SetInt32(self.ID_COLMAP_MODEL, 0 if COLMAP_MODEL.upper() == "PINHOLE" else 1)
-        self._set_float_value(self.ID_FX, COLMAP_FX_PX, 0.01, 1000000000.0, 1.0)
-        self._set_float_value(self.ID_FY, COLMAP_FY_PX, 0.01, 1000000000.0, 1.0)
-        self._set_float_value(self.ID_CX, COLMAP_CX_PX, -1000000000.0, 1000000000.0, 1.0)
-        self._set_float_value(self.ID_CY, COLMAP_CY_PX, -1000000000.0, 1000000000.0, 1.0)
         self._set_int_value(self.ID_SPARSE_COUNT, COLMAP_SPARSE_POINT_COUNT, 8, 1000000)
         self._set_float_value(self.ID_SPARSE_RADIUS_FACTOR, COLMAP_SPARSE_POINT_RADIUS_FACTOR, 0.0001, 100.0, 0.01)
         return True
@@ -1357,11 +1334,7 @@ class GSCameraSetupDialog(c4d.gui.GeDialog):
             TARGET_OBJECT_LINK = None
 
         SPHERE_RADIUS = max(0.001, float(self.GetFloat(self.ID_RADIUS)))
-        SPHERE_CENTER_OFFSET = c4d.Vector(
-            float(self.GetFloat(self.ID_CENTER_X)),
-            float(self.GetFloat(self.ID_CENTER_Y)),
-            float(self.GetFloat(self.ID_CENTER_Z)),
-        )
+        SPHERE_CENTER_OFFSET = c4d.Vector(0.0, 0.0, 0.0)
 
         sampling_mode_id = int(self.GetInt32(self.ID_SAMPLING_MODE))
         sampling_lookup = {0: "spiral", 1: "icosphere", 2: "fibonacci"}
@@ -1383,13 +1356,11 @@ class GSCameraSetupDialog(c4d.gui.GeDialog):
 
         EXPORT_COLMAP_DATA = bool(self.GetBool(self.ID_EXPORT_COLMAP))
 
-        AUTO_COLMAP_INTRINSICS_FROM_RENDER_CAMERA = bool(self.GetBool(self.ID_AUTO_INTRINSICS))
+        # Force auto intrinsics always on
+        AUTO_COLMAP_INTRINSICS_FROM_RENDER_CAMERA = True
         model_id = int(self.GetInt32(self.ID_COLMAP_MODEL))
         COLMAP_MODEL = "PINHOLE" if model_id == 0 else "SIMPLE_PINHOLE"
-        COLMAP_FX_PX = float(self.GetFloat(self.ID_FX))
-        COLMAP_FY_PX = float(self.GetFloat(self.ID_FY))
-        COLMAP_CX_PX = float(self.GetFloat(self.ID_CX))
-        COLMAP_CY_PX = float(self.GetFloat(self.ID_CY))
+        # NOTE: manual FX/FY/CX/CY not available in UI anymore; keep or calculate in camera path
         COLMAP_SPARSE_POINT_COUNT = max(8, int(self.GetInt32(self.ID_SPARSE_COUNT)))
         COLMAP_SPARSE_POINT_RADIUS_FACTOR = max(0.0001, float(self.GetFloat(self.ID_SPARSE_RADIUS_FACTOR)))
 
