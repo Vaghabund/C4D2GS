@@ -32,13 +32,9 @@ class _IDs:
     # Camera
     CAM_COUNT = 1020
     RADIUS = 1021
-    CENTER_X = 1022
-    CENTER_Y = 1023
-    CENTER_Z = 1024
     SAMPLING_MODE = 1025
     SPIRAL_TURNS = 1026
     SPIRAL_POLE = 1027
-    CENTER_MODE = 1028
 
     # Tab: Output
     OUTPUT_PATH = 1030
@@ -55,11 +51,6 @@ class _IDs:
     AUTO_UPDATE_RIG = 1053
     EXPORT_JSON = 1042
     EXPORT_COLMAP = 1045
-    AUTO_INTRINSICS = 1046
-    FX = 1048
-    FY = 1049
-    CX = 1050
-    CY = 1051
     SPARSE_COUNT = 1052
     CAMERA_TYPE = 1055
 
@@ -82,7 +73,6 @@ class _IDs:
     GRP_DIST = 2011
     GRP_OUTPUT_PATH_ROW = 2012
     GRP_RES = 2014
-    GRP_INTRINSICS = 2015
 
 
 # ---------------------------------------------------------------------------
@@ -315,11 +305,6 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self._si(_IDs.CAM_COUNT, s.camera_count, 1, 100000)
         s.sphere_radius = max(RADIUS_MIN, min(RADIUS_MAX, float(s.sphere_radius)))
         self._sf(_IDs.RADIUS, s.sphere_radius, RADIUS_MIN, RADIUS_MAX, 1.0)
-        # Force axis center mode and zero center offset
-        s.center_mode = 1
-        s.center_x = 0.0
-        s.center_y = 0.0
-        s.center_z = 0.0
         self.SetInt32(_IDs.CAMERA_TYPE, int(getattr(s, "camera_type", 0)))
         self.SetInt32(_IDs.SAMPLING_MODE, s.sampling_mode)
         self._sf(_IDs.SPIRAL_TURNS, s.spiral_turns, 0.01, 1e6, 0.1)
@@ -339,7 +324,6 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self.SetBool(_IDs.AUTO_UPDATE_RIG, bool(s.auto_update_rig))
         self.SetBool(_IDs.EXPORT_JSON, bool(s.export_json))
         self.SetBool(_IDs.EXPORT_COLMAP, bool(s.export_colmap))
-        # Always force auto intrinsics on
         self._si(_IDs.SPARSE_COUNT, s.sparse_count, 8, 100000)
 
         self._update_spiral_ui()
@@ -385,10 +369,6 @@ class C4D2GSDialog(c4d.gui.GeDialog):
 
         s.camera_count = max(1, int(self.GetInt32(_IDs.CAM_COUNT)))
         s.sphere_radius = max(RADIUS_MIN, min(RADIUS_MAX, float(self.GetFloat(_IDs.RADIUS))))
-        s.center_x = 0.0
-        s.center_y = 0.0
-        s.center_z = 0.0
-        s.center_mode = 1
         s.camera_type = int(self.GetInt32(_IDs.CAMERA_TYPE))
         s.sampling_mode = int(self.GetInt32(_IDs.SAMPLING_MODE))
         s.spiral_turns = max(0.01, float(self.GetFloat(_IDs.SPIRAL_TURNS)))
@@ -408,7 +388,6 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         s.export_json = bool(self.GetBool(_IDs.EXPORT_JSON))
         s.export_colmap = bool(self.GetBool(_IDs.EXPORT_COLMAP))
         s.straight_alpha = bool(self.GetBool(_IDs.STRAIGHT_ALPHA))
-        s.auto_intrinsics = True
         s.sparse_count = max(8, int(self.GetInt32(_IDs.SPARSE_COUNT)))
 
         self._update_spiral_ui()

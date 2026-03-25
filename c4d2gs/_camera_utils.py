@@ -9,7 +9,7 @@ from _constants import RS_CAMERA_TYPE_ID
 # ---------------------------------------------------------------------------
 
 def get_colmap_intrinsics(settings, render_cam=None):
-    if settings.auto_intrinsics and render_cam is not None:
+    if render_cam is not None:
         auto = _intrinsics_from_camera(render_cam, settings.res_x, settings.res_y)
         if auto is not None:
             return auto
@@ -21,7 +21,7 @@ def get_colmap_intrinsics(settings, render_cam=None):
         "fy": fy,
         "cx": float(settings.cx),
         "cy": float(settings.cy),
-        "source": "manual",
+        "source": "fallback",
     }
 
 
