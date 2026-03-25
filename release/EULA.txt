@@ -1,0 +1,49 @@
+COMMERCIAL END USER LICENSE AGREEMENT (EULA)
+
+This End User License Agreement ("Agreement") is a legal agreement between you
+(the "Licensee") and Joel Tenenberg ("Licensor") for the use of the software
+("Software") distributed with this repository.
+
+1. LICENSE GRANT
+Licensor grants Licensee a non-exclusive, non-transferable, revocable license
+to use the Software for Licensee's own internal business use.
+
+2. PROHIBITED USES (RESALE RESTRICTION)
+Licensee may not, without express prior written permission from Licensor:
+- distribute, resell, sublicense, or otherwise provide the Software (or any
+  derivative work) to third parties for any form of payment;
+- transfer or assign this license to any third party;
+- bundle or relicense the Software in another commercial product unless
+  explicitly agreed in writing by Licensor.
+
+3. COPYING
+Licensee may make one backup copy for archival purposes only.
+
+4. MODIFICATIONS
+Licensee may modify the Software for internal use, provided that any derived
+works are not distributed, resold, or sublicensed to third parties without
+written permission.
+
+5. OWNERSHIP
+Licensor retains all rights, title and interest in the Software, including
+all intellectual property rights.
+
+6. NO WARRANTIES
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. LICENSOR
+DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING FITNESS FOR A
+PARTICULAR PURPOSE.
+
+7. LIMITATION OF LIABILITY
+IN NO EVENT SHALL LICENSOR BE LIABLE FOR ANY INDIRECT, CONSEQUENTIAL,
+INCIDENTAL, SPECIAL, OR PUNITIVE DAMAGES.
+
+8. TERMINATION
+This Agreement will terminate immediately upon any breach. Upon termination,
+Licensee must cease all use of the Software and delete all copies.
+
+9. GOVERNING LAW
+This Agreement is governed by the laws of the jurisdiction where Licensor is
+located (currently: California, USA), without regard to conflict of law
+principles.
+
+By using the Software, Licensee agrees to all terms of this Agreement.

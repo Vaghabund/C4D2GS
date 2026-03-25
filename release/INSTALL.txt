@@ -1,0 +1,19 @@
+C4D2GS Installation Instructions
+
+"
+        "1) Extract the ZIP to a temporary folder.
+"
+        "2) Copy the `c4d2gs/` folder to your Cinema 4D plugins directory:
+"
+        "   - Windows: %APPDATA%\Maxon\Maxon Cinema 4D <version>\plugins\
+"
+        "   - macOS: ~/Library/Preferences/Maxon/Maxon Cinema 4D <version>/plugins/
+"
+        "3) Restart Cinema 4D.
+"
+        "4) Open Extensions -> C4D2GS and run the plugin.
+
+"
+        "License: use is governed by EULA.txt. Resale/re-distribution is prohibited unless approved.
+"
+        
