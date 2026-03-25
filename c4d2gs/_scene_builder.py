@@ -11,8 +11,7 @@ import c4d
 from _settings import Settings
 from _math_utils import generate_unit_points, _camera_matrices_for_export
 from _geometry_utils import (
-    object_center_for_mode,
-    center_offset_for_mode,
+    axis_center_of_object,
     rig_name_for_target,
     target_name_for_target,
     find_object_by_name,
@@ -33,9 +32,7 @@ def run_pipeline(doc, settings, target_obj, create_output_dirs=True):
     """Build camera rig + export files.  Returns a result dict."""
     doc.StartUndo()
     try:
-        target_pos = object_center_for_mode(
-            target_obj, getattr(settings, "center_mode", 0)
-        ) + center_offset_for_mode(settings)
+        target_pos = axis_center_of_object(target_obj)
 
         rig_name = rig_name_for_target(target_obj)
 
@@ -57,7 +54,7 @@ def run_pipeline(doc, settings, target_obj, create_output_dirs=True):
         target_null = c4d.BaseObject(c4d.Onull)
         target_null.SetName(target_name_for_target(target_obj))
         target_null.InsertUnder(rig)
-        target_null.SetAbsPos(target_pos)
+        target_null.SetRelPos(c4d.Vector(0))
         doc.AddUndo(c4d.UNDOTYPE_NEWOBJ, target_null)
 
         # Generate view-point positions
@@ -164,9 +161,7 @@ def create_or_update_rig(doc, settings, target_obj):
 
 def run_colmap_only(doc, settings, target_obj):
     """Export synthetic COLMAP data files without modifying the scene."""
-    target_pos = object_center_for_mode(
-        target_obj, getattr(settings, "center_mode", 0)
-    ) + center_offset_for_mode(settings)
+    target_pos = axis_center_of_object(target_obj)
     unit_pts, mode_used, mode_extra = generate_unit_points(settings)
     world_pts = [target_pos + p * settings.sphere_radius for p in unit_pts]
 

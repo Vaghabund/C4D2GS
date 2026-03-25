@@ -74,18 +74,6 @@ def axis_center_of_object(op):
     return op.GetMg().off
 
 
-def object_center_for_mode(op, center_mode):
-    if int(center_mode) == 1:
-        return axis_center_of_object(op)
-    return center_of_object(op)
-
-
-def center_offset_for_mode(settings):
-    if int(getattr(settings, "center_mode", 0)) == 1:
-        return c4d.Vector(0)
-    return c4d.Vector(settings.center_x, settings.center_y, settings.center_z)
-
-
 # ---------------------------------------------------------------------------
 # Object naming helpers
 # ---------------------------------------------------------------------------
