@@ -31,16 +31,17 @@ _DEFAULTS = dict(
     center_x=0.0,
     center_y=0.0,
     center_z=0.0,
-    center_mode=0,             # 0=geometry center, 1=axis/pivot center
-    sampling_mode=0,           # 0=spiral, 1=icosphere, 2=fibonacci
+    center_mode=0,
+    sampling_mode=0,
     spiral_turns=6.0,
     spiral_pole_margin=0.06,
     output_path=os.path.join(os.path.expanduser("~"), "Documents",
                              "gs_capture"),
-    output_format=getattr(c4d, "FILTER_PNG", 1023671),  # c4d.FILTER_PNG; overridden at runtime in Settings.__init__
+    output_format=getattr(c4d, "FILTER_PNG", 1023671),
     res_x=1920,
     res_y=1080,
     fps=30,
+    straight_alpha=False,
     create_anim_cam=True,
     replace_rig=True,
     auto_update_rig=False,

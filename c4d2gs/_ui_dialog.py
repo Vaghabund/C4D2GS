@@ -47,6 +47,7 @@ class _IDs:
     RES_X = 1033
     RES_Y = 1034
     FPS = 1035
+    STRAIGHT_ALPHA = 1036
 
     # Tab: Export
     CREATE_ANIM_CAM = 1040
@@ -94,11 +95,11 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         super(C4D2GSDialog, self).__init__()
         self._settings = Settings()
         _load_settings(self._settings)
-        self._target_obj = None  # c4d.BaseObject or None
+        self._target_obj = None
         self._target_link_gui = None
         self._is_auto_updating = False
         self._values_ready = False
-        self._divider_counter = 0  # incremented by _add_section_divider for unique IDs
+        self._divider_counter = 0
 
     # ------------------------------------------------------------------
     # Layout
@@ -191,7 +192,6 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self.GroupEnd()
 
     def _add_section_divider(self):
-        # Each call uses a unique ID pair to avoid duplicate widget IDs in C4D.
         self._divider_counter += 1
         grp_id = 2090 + self._divider_counter
         txt_id = 3090 + self._divider_counter
@@ -240,6 +240,10 @@ class C4D2GSDialog(c4d.gui.GeDialog):
 
         self.AddStaticText(3024, c4d.BFH_LEFT, name="FPS")
         self.AddEditNumberArrows(_IDs.FPS, c4d.BFH_SCALEFIT)
+
+        self.AddStaticText(3027, c4d.BFH_LEFT, name="Straight Alpha")
+        self.AddCheckbox(_IDs.STRAIGHT_ALPHA, c4d.BFH_LEFT, 0, 0, name="")
+
         self.GroupEnd()
 
         self.GroupEnd()
@@ -327,6 +331,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self._si(_IDs.RES_X, s.res_x, 1, 65535)
         self._si(_IDs.RES_Y, s.res_y, 1, 65535)
         self._si(_IDs.FPS, s.fps, 1, 1000)
+        self.SetBool(_IDs.STRAIGHT_ALPHA, bool(s.straight_alpha))
 
         # Export tab
         self.SetBool(_IDs.CREATE_ANIM_CAM, bool(s.create_anim_cam))
@@ -402,6 +407,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         s.auto_update_rig = bool(self.GetBool(_IDs.AUTO_UPDATE_RIG))
         s.export_json = bool(self.GetBool(_IDs.EXPORT_JSON))
         s.export_colmap = bool(self.GetBool(_IDs.EXPORT_COLMAP))
+        s.straight_alpha = bool(self.GetBool(_IDs.STRAIGHT_ALPHA))
         s.auto_intrinsics = True
         s.sparse_count = max(8, int(self.GetInt32(_IDs.SPARSE_COUNT)))
 

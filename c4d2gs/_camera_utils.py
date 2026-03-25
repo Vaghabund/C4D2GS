@@ -1,11 +1,3 @@
-"""
-C4D2GS — Camera helpers.
-
-Camera intrinsics extraction, camera object creation (standard / Redshift),
-focus distance setup, target-tag creation, animation key helpers, and
-render-settings configuration.
-"""
-
 import c4d
 import os
 
@@ -89,7 +81,6 @@ def _set_focus_distance_to_target(cam, target_pos):
     except Exception:
         return
 
-    # C4D versions expose different camera focus-distance IDs.
     focus_distance_ids = [
         "CAMERAOBJECT_TARGETDISTANCE",
         "CAMERAOBJECT_FOCUSDISTANCE",
@@ -107,8 +98,6 @@ def _set_focus_distance_to_target(cam, target_pos):
         except Exception:
             continue
 
-    # Enable the "Use Target Object" checkbox so focus tracks the target tag.
-    # Parameter name varies across C4D versions; try all known candidates.
     use_target_ids = [
         "CAMERAOBJECT_DEPTHOFFIELD_USETARGET",
         "CAMERAOBJECT_TARGETDISTANCE_ON",
@@ -193,6 +182,25 @@ def configure_render_settings(doc, settings, render_cam, frame_count, create_out
             rd[c4d.RDATA_PIXELASPECT] = 1.0
         except Exception:
             pass
+
+    if settings.straight_alpha:
+        for alpha_cid in ["RDATA_ALPHACHANNEL", "RDATA_ALPHA_CHANNEL"]:
+            pid = getattr(c4d, alpha_cid, None)
+            if pid is not None:
+                try:
+                    rd[pid] = True
+                    break
+                except Exception:
+                    continue
+        for straight_cid in ["RDATA_STRAIGHTALPHA", "RDATA_STRAIGHT_ALPHA"]:
+            pid = getattr(c4d, straight_cid, None)
+            if pid is not None:
+                try:
+                    rd[pid] = True
+                    break
+                except Exception:
+                    continue
+
     if render_cam is not None:
         if hasattr(c4d, "RDATA_CAMERA"):
             rd[c4d.RDATA_CAMERA] = render_cam
