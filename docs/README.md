@@ -88,4 +88,4 @@ C4D2GS exports:
 
 ## License
 
-CC BY-NC 4.0 (Creative Commons Attribution-NonCommercial 4.0 International).
+See EULA.txt for full license terms.
