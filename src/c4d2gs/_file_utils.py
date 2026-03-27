@@ -42,3 +42,31 @@ def _relative_frame_image_path(settings, frame_index):
 
 def _nerf_file_path(settings, frame_index):
     return os.path.join("images", os.path.basename(_frame_image_path(settings, frame_index))).replace("\\", "/")
+
+
+def generate_output_folder_name(base_path, target_object_name, overwrite=False):
+    """
+    Generate a folder name for Object mode exports.
+
+    Args:
+        base_path (str): The root output path.
+        target_object_name (str): The name of the target object.
+        overwrite (bool): Whether to overwrite existing folders.
+
+    Returns:
+        str: The full path to the output folder.
+    """
+    folder_name = f"Object_{target_object_name}_COLMAP"
+    output_path = os.path.join(base_path, folder_name)
+
+    if overwrite:
+        return output_path
+
+    # Check for existing folders and append a numeric suffix if needed
+    suffix = 1
+    final_path = output_path
+    while os.path.exists(final_path):
+        final_path = f"{output_path}_{suffix:03d}"
+        suffix += 1
+
+    return final_path

@@ -48,12 +48,15 @@ def _write_cameras_txt(path, intrinsics, res_x, res_y):
 # Main COLMAP export
 # ---------------------------------------------------------------------------
 
-def export_colmap(settings, world_points, target_pos, output_dir,
+def export_colmap(settings, world_points, target_pos, base_output_dir,
                   render_cam=None, doc=None, target_obj=None,
-                  camera_matrices=None):
+                  camera_matrices=None, overwrite=False):
     """Write synthetic COLMAP data files for COLMAP pipelines."""
     if not world_points:
         return None
+
+    # Generate the output directory name based on the target object
+    output_dir = generate_output_folder_name(base_output_dir, target_obj.GetName(), overwrite)
 
     output_dir = _normalize_path(output_dir)
     if not output_dir:

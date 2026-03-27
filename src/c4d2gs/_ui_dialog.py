@@ -53,6 +53,7 @@ class _IDs:
     EXPORT_COLMAP = 1045
     SPARSE_COUNT = 1052
     CAMERA_TYPE = 1055
+    CHK_OVERWRITE = 1056
 
     # Action buttons
     BTN_CREATE_RIG = 1089
@@ -239,43 +240,12 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self.GroupEnd()
 
     def _build_export_tab(self):
-        self.GroupBegin(_IDs.GRP_EXPORT_TAB,
-                        c4d.BFH_SCALEFIT,
-                        cols=1, title="Export", groupflags=c4d.BORDER_GROUP_IN)
-        self.GroupBorderSpace(6, 6, 6, 6)
-
-        # Scene options
-        self.GroupBegin(2040, c4d.BFH_SCALEFIT, cols=2,
-                        title="Scene Options", groupflags=c4d.BORDER_GROUP_IN)
+        self.GroupBegin(_IDs.GRP_EXPORT_TAB, c4d.BFH_SCALEFIT, cols=1, rows=0,
+                        title="Export Settings", groupflags=c4d.BORDER_GROUP_IN)
         self.GroupBorderSpace(6, 4, 6, 4)
-        self.AddStaticText(3030, c4d.BFH_LEFT, name="Create Animated Render Cam")
-        self.AddCheckbox(_IDs.CREATE_ANIM_CAM, c4d.BFH_LEFT, 0, 0, name="")
-        self.AddStaticText(3031, c4d.BFH_LEFT, name="Replace Existing Rig")
-        self.AddCheckbox(_IDs.REPLACE_RIG, c4d.BFH_LEFT, 0, 0, name="")
-        self.AddStaticText(3035, c4d.BFH_LEFT, name="Auto Update Rig")
-        self.AddCheckbox(_IDs.AUTO_UPDATE_RIG, c4d.BFH_LEFT, 0, 0, name="")
-        self.GroupEnd()
 
-        # Camera pose JSON
-        self.GroupBegin(2041, c4d.BFH_SCALEFIT, cols=2,
-                        title="Camera Pose JSON", groupflags=c4d.BORDER_GROUP_IN)
-        self.GroupBorderSpace(6, 4, 6, 4)
-        self.AddStaticText(3032, c4d.BFH_LEFT, name="Export Pose JSON")
-        self.AddCheckbox(_IDs.EXPORT_JSON, c4d.BFH_LEFT, 0, 0, name="")
-        self.AddStaticText(3033, c4d.BFH_LEFT, name="JSON Output")
-        self.AddStaticText(3034, c4d.BFH_LEFT, name="<Output Path>/camera_poses.json")
-        self.GroupEnd()
-
-        # Synthetic COLMAP data
-        self.GroupBegin(2042, c4d.BFH_SCALEFIT, cols=2,
-            title="Synthetic COLMAP Data", groupflags=c4d.BORDER_GROUP_IN)
-        self.GroupBorderSpace(6, 4, 6, 4)
-        self.AddStaticText(3040, c4d.BFH_LEFT, name="Export Synthetic COLMAP Data")
-        self.AddCheckbox(_IDs.EXPORT_COLMAP, c4d.BFH_LEFT, 0, 0, name="")
-
-        self.AddStaticText(3047, c4d.BFH_LEFT, name="Sparse Point Count")
-        self.AddEditNumberArrows(_IDs.SPARSE_COUNT, c4d.BFH_SCALEFIT)
-        self.GroupEnd()
+        # Add checkbox for overwrite behavior
+        self.AddCheckbox(_IDs.CHK_OVERWRITE, c4d.BFH_LEFT, name="Override existing export folder")
 
         self.GroupEnd()
 
@@ -303,7 +273,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
 
         # Camera tab
         self._si(_IDs.CAM_COUNT, s.camera_count, 1, 100000)
-        s.sphere_radius = max(RADIUS_MIN, min(RADIUS_MAX, float(s.sphere_radius)))
+        s.sphere_radius = float(self.GetFloat(_IDs.RADIUS))
         self._sf(_IDs.RADIUS, s.sphere_radius, RADIUS_MIN, RADIUS_MAX, 1.0)
         self.SetInt32(_IDs.CAMERA_TYPE, int(getattr(s, "camera_type", 0)))
         self.SetInt32(_IDs.SAMPLING_MODE, s.sampling_mode)
