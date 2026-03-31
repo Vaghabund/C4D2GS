@@ -3,6 +3,7 @@ C4D2GS — Plugin UI: dialog, widget IDs, and CommandData class.
 """
 
 import c4d
+import traceback
 import os
 
 from _constants import (
@@ -35,6 +36,8 @@ class _IDs:
     SAMPLING_MODE = 1025
     SPIRAL_TURNS = 1026
     SPIRAL_POLE = 1027
+    ADDITIONAL_CAMERAS_GROUP = 4000  # New ID for additional cameras group
+    ADDITIONAL_CAMERAS_GROUP_FIELD = 4010
 
     # Tab: Output
     OUTPUT_PATH = 1030
@@ -55,11 +58,35 @@ class _IDs:
     CAMERA_TYPE = 1055
     CHK_OVERWRITE = 1056
 
+    # Tab: Space
+    GRP_SPACE_TAB = 2005  # New group ID for Space tab
+    ANCHOR_MODE = 3005  # Anchor placement mode dropdown
+    CLUSTER_CAM_COUNT = 3006  # Cameras per cluster
+    CLUSTER_RADIUS = 3007  # Cluster radius
+    SAMPLING_MODE = 3008  # Sampling mode
+    AUTO_Y_HEIGHT = 3009  # Auto Y-height parameter
+    # Manual anchor / Y-height controls
+    MANUAL_ANCHOR_CHECKBOX = 3013
+    MANUAL_ANCHOR_GROUP = 3014
+    MANUAL_ANCHOR_GROUP_FIELD = 3015
+    MANUAL_Y_HEIGHT_CHECKBOX = 3016
+    MANUAL_Y_HEIGHT_GROUP = 3017
+    MANUAL_Y_HEIGHT_FIELD = 3018
+
     # Action buttons
     BTN_CREATE_RIG = 1089
     BTN_EXECUTE = 1090
     BTN_COLMAP_ONLY = 1091
     BTN_CLOSE = 1092
+    # UI tab selector (fallback for C4D versions without tab headers)
+    TAB_SELECTOR = 1100
+    # Header-style tab buttons (top row quick selectors)
+    TAB_BTN_OBJECT = 1110
+    TAB_BTN_SPACE = 1111
+    TAB_BTN_OUTPUT = 1112
+    TAB_BTN_EXPORT = 1113
+    TAB_BTN_IMPORT = 1114
+    TAB_BTN_RENDER = 1115
 
     # Status
     STATUS_TEXT = 1099
@@ -74,6 +101,12 @@ class _IDs:
     GRP_DIST = 2011
     GRP_OUTPUT_PATH_ROW = 2012
     GRP_RES = 2014
+    # Tab: Render
+    GRP_RENDER_TAB = 2006
+    RENDER_ENGINE = 5000
+    RENDER_USE_GLOBAL = 5001
+    RENDER_SAMPLES = 5002
+    RENDER_CAMERA = 5003
 
 
 # ---------------------------------------------------------------------------
@@ -97,70 +130,148 @@ class C4D2GSDialog(c4d.gui.GeDialog):
     # ------------------------------------------------------------------
 
     def CreateLayout(self):
-        self.SetTitle("C4D2GS  —  Synthetic COLMAP Data Generator  v{}".format(PLUGIN_VERSION))
+        try:
+            self.SetTitle("C4D2GS  —  Synthetic COLMAP Data Generator  v{}".format(PLUGIN_VERSION))
 
-        # ---- Action buttons (top strip) ----
-        self.GroupBegin(_IDs.GRP_BUTTONS, c4d.BFH_SCALEFIT, cols=3, rows=1)
-        self.GroupBorderSpace(6, 6, 6, 4)
-        self.AddButton(_IDs.BTN_CREATE_RIG, c4d.BFH_SCALEFIT, name="  Build Rig  ")
-        self.AddButton(_IDs.BTN_COLMAP_ONLY, c4d.BFH_SCALEFIT, name="  Export COLMAP  ")
-        self.AddButton(_IDs.BTN_EXECUTE, c4d.BFH_SCALEFIT, name="  Build & Export  ")
-        self.GroupEnd()
+            # ---- Tab Group ----
+            # Prefer native TabGroup when available so panes are truly hidden
+            use_native_tabs = hasattr(c4d, "TAB_CHILD") and hasattr(c4d, "TAB_TABS")
+            if use_native_tabs:
+                try:
+                    # Parent group that holds tab children
+                    self.GroupBegin(_IDs.GRP_HEADER, c4d.BFH_SCALEFIT, cols=1, groupflags=c4d.TAB_TABS)
+                    self.GroupBorderSpace(6, 6, 6, 4)
 
-        # ---- Header: target object ----
-        self.GroupBegin(_IDs.GRP_HEADER, c4d.BFH_SCALEFIT, cols=2, rows=1,
-                        title="Target Object", groupflags=c4d.BORDER_GROUP_IN)
-        self.GroupBorderSpace(6, 4, 6, 4)
-        self.AddStaticText(2999, c4d.BFH_LEFT, name="Object")
-        self._target_link_gui = self.AddCustomGui(
-            _IDs.TARGET_LINK, c4d.CUSTOMGUI_LINKBOX, "",
-            c4d.BFH_SCALEFIT, 0, 0, c4d.BaseContainer(),
-        )
-        self.GroupEnd()
+                    # Minimal, Cinema-like panes: Object, Space, Export
+                    self.GroupBegin(101, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT, cols=1, rows=0, title="Object", groupflags=c4d.TAB_CHILD)
+                    self._build_object_tab()
+                    self.GroupEnd()
 
-        # ---- Main sections ----
-        self.GroupBegin(2100, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT, cols=1, rows=0)
-        self.GroupBorderSpace(0, 4, 0, 4)
+                    self.GroupBegin(102, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT, cols=1, rows=0, title="Space", groupflags=c4d.TAB_CHILD)
+                    self._build_space_tab()
+                    self.GroupEnd()
 
-        self._build_camera_tab()
-        self._add_section_divider()
-        self._build_output_tab()
-        self._add_section_divider()
-        self._build_export_tab()
+                    self.GroupBegin(106, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT, cols=1, rows=0, title="Export", groupflags=c4d.TAB_CHILD)
+                    self._build_export_tab()
+                    self.GroupEnd()
 
-        self.GroupEnd()
+                    self.GroupEnd()
+                    c4d.GePrint("[C4D2GS] CreateLayout: using native tab group (Object, Space, Export)")
+                except Exception:
+                    c4d.GePrint("[C4D2GS] CreateLayout: native tabs failed, falling back. Exception:\n{}".format(traceback.format_exc()))
+                    # Fallback to button header if native tab flags fail at runtime
+                    use_native_tabs = False
 
-        # ---- Status ----
-        self.AddStaticText(_IDs.STATUS_TEXT, c4d.BFH_SCALEFIT,
-                           name="Select a target object and click Build & Export.")
+            if not use_native_tabs:
+                # Header with top-row selector buttons (plus combo fallback)
+                self.GroupBegin(_IDs.GRP_HEADER, c4d.BFH_SCALEFIT, cols=3)
+                self.GroupBorderSpace(6, 6, 6, 4)
+                self.AddButton(_IDs.TAB_BTN_OBJECT, c4d.BFH_SCALEFIT, 0, 0, "Object")
+                self.AddButton(_IDs.TAB_BTN_SPACE, c4d.BFH_SCALEFIT, 0, 0, "Space")
+                self.AddButton(_IDs.TAB_BTN_EXPORT, c4d.BFH_SCALEFIT, 0, 0, "Export")
+                # Combo fallback (kept for persistence across C4D versions)
+                self.AddComboBox(_IDs.TAB_SELECTOR, c4d.BFH_LEFT)
+                self.AddChild(_IDs.TAB_SELECTOR, 0, "Object")
+                self.AddChild(_IDs.TAB_SELECTOR, 1, "Space")
+                self.AddChild(_IDs.TAB_SELECTOR, 2, "Export")
+                self.GroupEnd()
+                c4d.GePrint("[C4D2GS] CreateLayout: using header-button fallback (Object, Space, Export)")
 
-        return True
+                # Object Pane
+                self.GroupBegin(101, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT, cols=1, rows=0, title="Object")
+                self._build_object_tab()
+                self.GroupEnd()
 
-    def _build_camera_tab(self):
-        self.GroupBegin(_IDs.GRP_CAMERA_TAB,
-                        c4d.BFH_SCALEFIT,
-                        cols=1, title="Camera", groupflags=c4d.BORDER_GROUP_IN)
+                # Space Pane
+                self.GroupBegin(102, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT, cols=1, rows=0, title="Space")
+                self._build_space_tab()
+                self.GroupEnd()
+
+                # Export Pane
+                self.GroupBegin(106, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT, cols=1, rows=0, title="Export")
+                self._build_export_tab()
+                self.GroupEnd()
+
+            # ---- Action Buttons (Bottom) ----
+            self.GroupBegin(_IDs.GRP_BUTTONS, c4d.BFH_SCALEFIT, cols=3, rows=1)
+            self.GroupBorderSpace(6, 6, 6, 4)
+            self.AddButton(_IDs.BTN_CREATE_RIG, c4d.BFH_SCALEFIT, 0, 0, "  Build Rig  ")
+            self.AddButton(_IDs.BTN_COLMAP_ONLY, c4d.BFH_SCALEFIT, 0, 0, "  Export COLMAP  ")
+            self.AddButton(_IDs.BTN_EXECUTE, c4d.BFH_SCALEFIT, 0, 0, "  Build & Export  ")
+            self.GroupEnd()
+
+            # ---- Status ----
+            self.AddStaticText(_IDs.STATUS_TEXT, c4d.BFH_SCALEFIT, 0, 0,
+                               "Select a target object and click Build & Export.")
+
+            return True
+        except Exception as exc:
+            # Show a minimal fallback UI and report the error so the dialog still opens
+            try:
+                err = traceback.format_exc()
+                c4d.gui.MessageDialog("C4D2GS UI failed to build:\n{}".format(str(exc)))
+            except Exception:
+                pass
+            # Minimal UI
+            try:
+                self.GroupBegin(900, c4d.BFH_SCALEFIT, cols=1)
+                self.AddStaticText(901, c4d.BFH_SCALEFIT, 0, 0, "C4D2GS — UI failed to build. See console.")
+                self.GroupEnd()
+            except Exception:
+                pass
+            return True
+
+    def _build_object_tab(self):
+        # Object tab content
+        self.GroupBegin(_IDs.GRP_CAMERA_TAB, c4d.BFH_SCALEFIT, cols=1, title="Camera", groupflags=c4d.BORDER_GROUP_IN)
         self.GroupBorderSpace(6, 6, 6, 6)
 
         # Sphere section
+        # Target object link (header for object tab)
+        self.AddStaticText(1001, c4d.BFH_LEFT, 0, 0, "Target Object")
+        self.AddCustomGui(
+            _IDs.TARGET_LINK, c4d.CUSTOMGUI_LINKBOX, "",
+            c4d.BFH_SCALEFIT, 0, 0, c4d.BaseContainer(),
+        )
+        try:
+            self._target_link_gui = self.GetCustomGui(_IDs.TARGET_LINK)
+        except Exception:
+            self._target_link_gui = None
+
         self.GroupBegin(_IDs.GRP_SPHERE, c4d.BFH_SCALEFIT, cols=2,
                         title="Sphere", groupflags=c4d.BORDER_GROUP_IN)
         self.GroupBorderSpace(6, 4, 6, 4)
 
-        self.AddStaticText(3000, c4d.BFH_LEFT, name="Camera Count")
+        self.AddStaticText(3000, c4d.BFH_LEFT, 0, 0, "Camera Count")
         self.AddEditNumberArrows(_IDs.CAM_COUNT, c4d.BFH_SCALEFIT)
 
-        self.AddStaticText(3001, c4d.BFH_LEFT, name="Radius")
+        self.AddStaticText(3001, c4d.BFH_LEFT, 0, 0, "Radius")
         if hasattr(self, "AddEditSlider"):
             self.AddEditSlider(_IDs.RADIUS, c4d.BFH_SCALEFIT)
         else:
             self.AddEditNumberArrows(_IDs.RADIUS, c4d.BFH_SCALEFIT)
 
 
-        self.AddStaticText(3006, c4d.BFH_LEFT, name="Camera Type")
+        self.AddStaticText(3006, c4d.BFH_LEFT, 0, 0, "Camera Type")
         self.AddComboBox(_IDs.CAMERA_TYPE, c4d.BFH_SCALEFIT)
         self.AddChild(_IDs.CAMERA_TYPE, 0, "Standard")
         self.AddChild(_IDs.CAMERA_TYPE, 1, "Redshift RSCamera")
+        self.GroupEnd()
+
+        # Additional Camera Group
+        self.GroupBegin(_IDs.ADDITIONAL_CAMERAS_GROUP, c4d.BFH_SCALEFIT, cols=1,
+                        title="Additional Camera Group", groupflags=c4d.BORDER_GROUP_IN)
+        self.GroupBorderSpace(6, 4, 6, 4)
+
+        self.AddStaticText(4001, c4d.BFH_LEFT, 0, 0, "Camera Group")
+        self.AddCustomGui(
+            _IDs.ADDITIONAL_CAMERAS_GROUP_FIELD, c4d.CUSTOMGUI_LINKBOX, "",
+            c4d.BFH_SCALEFIT, 0, 0, c4d.BaseContainer(),
+        )
+        try:
+            self._additional_cameras_gui = self.GetCustomGui(_IDs.ADDITIONAL_CAMERAS_GROUP_FIELD)
+        except Exception:
+            self._additional_cameras_gui = None
         self.GroupEnd()
 
         # Distribution section
@@ -168,15 +279,15 @@ class C4D2GSDialog(c4d.gui.GeDialog):
                         title="Distribution", groupflags=c4d.BORDER_GROUP_IN)
         self.GroupBorderSpace(6, 4, 6, 4)
 
-        self.AddStaticText(3010, c4d.BFH_LEFT, name="Sampling Mode")
+        self.AddStaticText(3010, c4d.BFH_LEFT, 0, 0, "Sampling Mode")
         self.AddComboBox(_IDs.SAMPLING_MODE, c4d.BFH_SCALEFIT)
         for mode_id, label in [(0, "Spiral"), (1, "Icosphere"), (2, "Fibonacci")]:
             self.AddChild(_IDs.SAMPLING_MODE, mode_id, label)
 
-        self.AddStaticText(3011, c4d.BFH_LEFT, name="Spiral Turns")
+        self.AddStaticText(3011, c4d.BFH_LEFT, 0, 0, "Spiral Turns")
         self.AddEditNumberArrows(_IDs.SPIRAL_TURNS, c4d.BFH_SCALEFIT)
 
-        self.AddStaticText(3012, c4d.BFH_LEFT, name="Pole Margin")
+        self.AddStaticText(3012, c4d.BFH_LEFT, 0, 0, "Pole Margin")
         self.AddEditNumberArrows(_IDs.SPIRAL_POLE, c4d.BFH_SCALEFIT)
         self.GroupEnd()
 
@@ -195,10 +306,99 @@ class C4D2GSDialog(c4d.gui.GeDialog):
                 return
             except Exception:
                 pass
-        self.AddStaticText(txt_id, c4d.BFH_SCALEFIT, name="")
+        self.AddStaticText(txt_id, c4d.BFH_SCALEFIT, 0, 0, "")
+        self.GroupEnd()
+
+    def _build_space_tab(self):
+        # Space tab content
+        self.GroupBegin(_IDs.GRP_SPACE_TAB, c4d.BFH_SCALEFIT, cols=1, title="Space", groupflags=c4d.BORDER_GROUP_IN)
+        self.GroupBorderSpace(6, 6, 6, 6)
+
+        # Anchor placement mode
+        self.AddStaticText(4000, c4d.BFH_LEFT, 0, 0, "Anchor Placement Mode")
+        self.AddComboBox(_IDs.ANCHOR_MODE, c4d.BFH_SCALEFIT)
+        self.AddChild(_IDs.ANCHOR_MODE, 0, "Auto Placement")
+        self.AddChild(_IDs.ANCHOR_MODE, 1, "Manual Placement")
+
+        # Manual Anchor Placement Checkbox
+        self.AddStaticText(4001, c4d.BFH_LEFT, 0, 0, "Manual Anchor Placement")
+        self.AddCheckbox(_IDs.MANUAL_ANCHOR_CHECKBOX, c4d.BFH_LEFT, 0, 0, "Enable Manual Anchors")
+
+        # Manual Anchor Group Field (Initially Disabled)
+        self.GroupBegin(_IDs.MANUAL_ANCHOR_GROUP, c4d.BFH_SCALEFIT, cols=1,
+                        title="Manual Anchor Group", groupflags=c4d.BORDER_GROUP_IN)
+        self.GroupBorderSpace(6, 4, 6, 4)
+
+        self.AddStaticText(4002, c4d.BFH_LEFT, 0, 0, "Anchor Group")
+        self.AddCustomGui(
+            _IDs.MANUAL_ANCHOR_GROUP_FIELD, c4d.CUSTOMGUI_LINKBOX, "",
+            c4d.BFH_SCALEFIT, 0, 0, c4d.BaseContainer(),
+        )
+        self.GroupEnd()
+
+    def _build_render_tab(self):
+        # Render tab content
+        self.GroupBegin(_IDs.GRP_RENDER_TAB, c4d.BFH_SCALEFIT, cols=1, title="Render Settings", groupflags=c4d.BORDER_GROUP_IN)
+        self.GroupBorderSpace(6, 6, 6, 6)
+
+        # Renderer selection
+        self.AddStaticText(5004, c4d.BFH_LEFT, 0, 0, "Renderer")
+        self.AddComboBox(_IDs.RENDER_ENGINE, c4d.BFH_SCALEFIT)
+        self.AddChild(_IDs.RENDER_ENGINE, 0, "Standard")
+        self.AddChild(_IDs.RENDER_ENGINE, 1, "Physical")
+        self.AddChild(_IDs.RENDER_ENGINE, 2, "Redshift")
+
+        # Use global render settings flag
+        self.AddStaticText(5005, c4d.BFH_LEFT, 0, 0, "Use Global Render Settings")
+        self.AddCheckbox(_IDs.RENDER_USE_GLOBAL, c4d.BFH_LEFT, 0, 0, "Use Global")
+
+        # Samples / quality
+        self.AddStaticText(5006, c4d.BFH_LEFT, 0, 0, "Render Samples")
+        self.AddEditNumberArrows(_IDs.RENDER_SAMPLES, c4d.BFH_SCALEFIT)
+
+        # Camera selector (optional)
+        self.AddStaticText(5007, c4d.BFH_LEFT, 0, 0, "Render Camera")
+        self.AddCustomGui(_IDs.RENDER_CAMERA, c4d.CUSTOMGUI_LINKBOX, "", c4d.BFH_SCALEFIT, 0, 0, c4d.BaseContainer())
+        try:
+            self._render_camera_gui = self.GetCustomGui(_IDs.RENDER_CAMERA)
+        except Exception:
+            self._render_camera_gui = None
+
+        self.GroupEnd()
+
+        # Manual Y Height Checkbox
+        self.AddStaticText(4003, c4d.BFH_LEFT, 0, 0, "Manual Y Height")
+        self.AddCheckbox(_IDs.MANUAL_Y_HEIGHT_CHECKBOX, c4d.BFH_LEFT, 0, 0, "Enable Manual Y Height")
+
+        # Y Height Parameter Field (Initially Disabled)
+        self.GroupBegin(_IDs.MANUAL_Y_HEIGHT_GROUP, c4d.BFH_SCALEFIT, cols=1,
+                        title="Y Height Parameter", groupflags=c4d.BORDER_GROUP_IN)
+        self.GroupBorderSpace(6, 4, 6, 4)
+
+        self.AddStaticText(4004, c4d.BFH_LEFT, 0, 0, "Y Height")
+        self.AddEditNumberArrows(_IDs.MANUAL_Y_HEIGHT_FIELD, c4d.BFH_SCALEFIT)
+        self.GroupEnd()
+
+        # Cluster parameters
+        self.AddStaticText(4005, c4d.BFH_LEFT, 0, 0, "Cameras per Cluster")
+        self.AddEditNumberArrows(_IDs.CLUSTER_CAM_COUNT, c4d.BFH_SCALEFIT)
+
+        self.AddStaticText(4006, c4d.BFH_LEFT, 0, 0, "Cluster Radius")
+        self.AddEditNumberArrows(_IDs.CLUSTER_RADIUS, c4d.BFH_SCALEFIT)
+
+        self.AddStaticText(4007, c4d.BFH_LEFT, 0, 0, "Sampling Mode")
+        self.AddComboBox(_IDs.SAMPLING_MODE, c4d.BFH_SCALEFIT)
+        for mode_id, label in [(0, "Spiral"), (1, "Icosphere"), (2, "Fibonacci")]:
+            self.AddChild(_IDs.SAMPLING_MODE, mode_id, label)
+
+        # Auto Y-height parameter
+        self.AddStaticText(4008, c4d.BFH_LEFT, 0, 0, "Auto Y-Height")
+        self.AddEditNumberArrows(_IDs.AUTO_Y_HEIGHT, c4d.BFH_SCALEFIT)
+
         self.GroupEnd()
 
     def _build_output_tab(self):
+        # Output tab content
         self.GroupBegin(_IDs.GRP_OUTPUT_TAB,
                         c4d.BFH_SCALEFIT,
                         cols=1, title="Output", groupflags=c4d.BORDER_GROUP_IN)
@@ -208,32 +408,32 @@ class C4D2GSDialog(c4d.gui.GeDialog):
                         title="Image Output", groupflags=c4d.BORDER_GROUP_IN)
         self.GroupBorderSpace(6, 4, 6, 4)
 
-        self.AddStaticText(3020, c4d.BFH_LEFT, name="Output Path")
+        self.AddStaticText(3020, c4d.BFH_LEFT, 0, 0, "Output Path")
         self.GroupBegin(_IDs.GRP_OUTPUT_PATH_ROW, c4d.BFH_SCALEFIT, cols=2, rows=1)
         self.AddEditText(_IDs.OUTPUT_PATH, c4d.BFH_SCALEFIT)
-        self.AddButton(_IDs.OUTPUT_PATH_BROWSE, c4d.BFH_RIGHT, name="Browse…")
+        self.AddButton(_IDs.OUTPUT_PATH_BROWSE, c4d.BFH_RIGHT, 0, 0, "Browse…")
         self.GroupEnd()
 
-        self.AddStaticText(3025, c4d.BFH_LEFT, name="Generated Files")
-        self.AddStaticText(3026, c4d.BFH_LEFT, name="cameras.txt + images.txt + points3D.txt + images/gs_####")
+        self.AddStaticText(3025, c4d.BFH_LEFT, 0, 0, "Generated Files")
+        self.AddStaticText(3026, c4d.BFH_LEFT, 0, 0, "cameras.txt + images.txt + points3D.txt + images/gs_####")
 
-        self.AddStaticText(3021, c4d.BFH_LEFT, name="Format")
+        self.AddStaticText(3021, c4d.BFH_LEFT, 0, 0, "Format")
         self.AddComboBox(_IDs.OUTPUT_FORMAT, c4d.BFH_SCALEFIT)
         for fmt_id, fmt_name in self._output_format_items():
             self.AddChild(_IDs.OUTPUT_FORMAT, int(fmt_id), fmt_name)
 
-        self.AddStaticText(3022, c4d.BFH_LEFT, name="Resolution")
+        self.AddStaticText(3022, c4d.BFH_LEFT, 0, 0, "Resolution")
         self.GroupBegin(_IDs.GRP_RES, c4d.BFH_SCALEFIT, cols=3, rows=1)
         self.AddEditNumber(_IDs.RES_X, c4d.BFH_SCALEFIT)
-        self.AddStaticText(3023, c4d.BFH_CENTER, name="×")
+        self.AddStaticText(3023, c4d.BFH_CENTER, 0, 0, "×")
         self.AddEditNumber(_IDs.RES_Y, c4d.BFH_SCALEFIT)
         self.GroupEnd()
 
-        self.AddStaticText(3024, c4d.BFH_LEFT, name="FPS")
+        self.AddStaticText(3024, c4d.BFH_LEFT, 0, 0, "FPS")
         self.AddEditNumberArrows(_IDs.FPS, c4d.BFH_SCALEFIT)
 
-        self.AddStaticText(3027, c4d.BFH_LEFT, name="Straight Alpha")
-        self.AddCheckbox(_IDs.STRAIGHT_ALPHA, c4d.BFH_LEFT, 0, 0, name="")
+        self.AddStaticText(3027, c4d.BFH_LEFT, 0, 0, "Straight Alpha")
+        self.AddCheckbox(_IDs.STRAIGHT_ALPHA, c4d.BFH_LEFT, 0, 0, "")
 
         self.GroupEnd()
 
@@ -245,7 +445,7 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self.GroupBorderSpace(6, 4, 6, 4)
 
         # Add checkbox for overwrite behavior
-        self.AddCheckbox(_IDs.CHK_OVERWRITE, c4d.BFH_LEFT, name="Override existing export folder")
+        self.AddCheckbox(_IDs.CHK_OVERWRITE, c4d.BFH_LEFT, 0, 0, "Override existing export folder")
 
         self.GroupEnd()
 
@@ -294,9 +494,59 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self.SetBool(_IDs.AUTO_UPDATE_RIG, bool(s.auto_update_rig))
         self.SetBool(_IDs.EXPORT_JSON, bool(s.export_json))
         self.SetBool(_IDs.EXPORT_COLMAP, bool(s.export_colmap))
+        self.SetBool(_IDs.CHK_OVERWRITE, bool(getattr(s, "overwrite_export", False)))
         self._si(_IDs.SPARSE_COUNT, s.sparse_count, 8, 100000)
 
+        # Space tab
+        try:
+            self.SetInt32(_IDs.ANCHOR_MODE, getattr(s, "anchor_mode", 0))
+            self.SetBool(_IDs.MANUAL_ANCHOR_CHECKBOX, bool(getattr(s, "manual_anchor_enabled", False)))
+            # linkbox holds a reference; prefer None when unset
+            try:
+                self.SetLink(_IDs.MANUAL_ANCHOR_GROUP_FIELD, getattr(s, "manual_anchor_group", None))
+            except Exception:
+                pass
+            self.SetBool(_IDs.MANUAL_Y_HEIGHT_CHECKBOX, bool(getattr(s, "manual_y_height_enabled", False)))
+            self._sf(_IDs.MANUAL_Y_HEIGHT_FIELD, getattr(s, "manual_y_height", 0.0), -1e6, 1e6, 0.1)
+
+            # enable/disable UI parts according to settings
+            try:
+                self.Enable(_IDs.MANUAL_ANCHOR_GROUP, bool(getattr(s, "manual_anchor_enabled", False)))
+                self.Enable(_IDs.MANUAL_ANCHOR_GROUP_FIELD, bool(getattr(s, "manual_anchor_enabled", False)))
+                self.Enable(_IDs.MANUAL_Y_HEIGHT_GROUP, bool(getattr(s, "manual_y_height_enabled", False)))
+                self.Enable(_IDs.MANUAL_Y_HEIGHT_FIELD, bool(getattr(s, "manual_y_height_enabled", False)))
+            except Exception:
+                pass
+
+        except Exception:
+            # backward compatibility: ignore if settings not present
+            pass
+
         self._update_spiral_ui()
+        # Render tab values
+        try:
+            self.SetInt32(_IDs.RENDER_ENGINE, int(getattr(s, "render_engine", 0)))
+            self.SetBool(_IDs.RENDER_USE_GLOBAL, bool(getattr(s, "render_use_global", True)))
+            self._si(_IDs.RENDER_SAMPLES, getattr(s, "render_samples", 8), 1, 65535)
+            try:
+                self.SetLink(_IDs.RENDER_CAMERA, getattr(s, "render_camera", None))
+            except Exception:
+                pass
+        except Exception:
+            pass
+        # Tab selector: set saved or default tab and update visibility
+        try:
+            self.SetInt32(_IDs.TAB_SELECTOR, int(getattr(s, "last_tab", 0)))
+        except Exception:
+            self.SetInt32(_IDs.TAB_SELECTOR, 0)
+        try:
+            self._update_tab_visibility()
+        except Exception:
+            pass
+        try:
+            c4d.GePrint("[C4D2GS] InitValues: last_tab={}".format(int(getattr(s, "last_tab", 0))))
+        except Exception:
+            pass
         self._refresh_status()
         self._values_ready = True
         return True
@@ -308,6 +558,31 @@ class C4D2GSDialog(c4d.gui.GeDialog):
                 self.Enable(cid, spiral_enabled)
             except Exception:
                 pass
+
+    def _update_tab_visibility(self):
+        try:
+            sel = int(self.GetInt32(_IDs.TAB_SELECTOR))
+        except Exception:
+            sel = 0
+        try:
+            c4d.GePrint("[C4D2GS] _update_tab_visibility: sel={}".format(sel))
+        except Exception:
+            pass
+        # Minimal mapping: 0=Object(101), 1=Space(102), 2=Export(106)
+        try:
+            self.Enable(101, sel == 0)
+            self.Enable(102, sel == 1)
+            self.Enable(106, sel == 2)
+            # Ensure other panes are disabled when not used
+            try:
+                self.Enable(105, False)
+                self.Enable(103, False)
+                self.Enable(104, False)
+            except Exception:
+                pass
+        except Exception:
+            # If enabling groups fails, ignore silently
+            pass
 
     def _si(self, cid, value, mn, mx):
         try:
@@ -344,6 +619,60 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         s.spiral_turns = max(0.01, float(self.GetFloat(_IDs.SPIRAL_TURNS)))
         s.spiral_pole_margin = max(0.0, min(0.49, float(self.GetFloat(_IDs.SPIRAL_POLE))))
 
+        # Space tab values
+        try:
+            s.anchor_mode = int(self.GetInt32(_IDs.ANCHOR_MODE))
+        except Exception:
+            s.anchor_mode = getattr(s, "anchor_mode", 0)
+
+        try:
+            s.manual_anchor_enabled = bool(self.GetBool(_IDs.MANUAL_ANCHOR_CHECKBOX))
+        except Exception:
+            s.manual_anchor_enabled = getattr(s, "manual_anchor_enabled", False)
+
+        # Manual anchor group: attempt to read link from linkbox
+        manual_group = None
+        try:
+            # Try BaseObject / BaseList2D / document-aware variants
+            try:
+                manual_group = self.GetLink(_IDs.MANUAL_ANCHOR_GROUP_FIELD, getattr(c4d, "BaseObject", None))
+            except Exception:
+                manual_group = None
+        except Exception:
+            manual_group = None
+        # Scene builder expects `anchor_null_group`
+        s.anchor_null_group = manual_group
+
+        try:
+            s.manual_y_height_enabled = bool(self.GetBool(_IDs.MANUAL_Y_HEIGHT_CHECKBOX))
+        except Exception:
+            s.manual_y_height_enabled = getattr(s, "manual_y_height_enabled", False)
+
+        try:
+            s.manual_y_height = float(self.GetFloat(_IDs.MANUAL_Y_HEIGHT_FIELD))
+        except Exception:
+            s.manual_y_height = getattr(s, "manual_y_height", 0.0)
+
+        try:
+            s.cluster_cam_count = max(1, int(self.GetInt32(_IDs.CLUSTER_CAM_COUNT)))
+        except Exception:
+            s.cluster_cam_count = getattr(s, "cluster_cam_count", 1)
+
+        try:
+            s.cluster_radius = float(self.GetFloat(_IDs.CLUSTER_RADIUS))
+        except Exception:
+            s.cluster_radius = getattr(s, "cluster_radius", 10.0)
+
+        try:
+            s.auto_y_height = float(self.GetFloat(_IDs.AUTO_Y_HEIGHT))
+        except Exception:
+            s.auto_y_height = getattr(s, "auto_y_height", 0.0)
+
+        try:
+            s.overwrite_export = bool(self.GetBool(_IDs.CHK_OVERWRITE))
+        except Exception:
+            s.overwrite_export = getattr(s, "overwrite_export", False)
+
         s.output_path = _normalize_path(self.GetString(_IDs.OUTPUT_PATH).strip())
         if s.output_path:
             self.SetString(_IDs.OUTPUT_PATH, s.output_path)
@@ -351,6 +680,38 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         s.res_x = max(1, int(self.GetInt32(_IDs.RES_X)))
         s.res_y = max(1, int(self.GetInt32(_IDs.RES_Y)))
         s.fps = max(1, int(self.GetInt32(_IDs.FPS)))
+
+        # Render tab values
+        try:
+            s.render_engine = int(self.GetInt32(_IDs.RENDER_ENGINE))
+        except Exception:
+            s.render_engine = getattr(s, "render_engine", 0)
+        try:
+            s.render_use_global = bool(self.GetBool(_IDs.RENDER_USE_GLOBAL))
+        except Exception:
+            s.render_use_global = getattr(s, "render_use_global", True)
+        try:
+            s.render_samples = max(1, int(self.GetInt32(_IDs.RENDER_SAMPLES)))
+        except Exception:
+            s.render_samples = getattr(s, "render_samples", 8)
+        # Render camera link (do not persist heavy object refs)
+        try:
+            cam = None
+            if getattr(self, "_render_camera_gui", None) is not None:
+                gui_get = getattr(self._render_camera_gui, "GetLink", None)
+                if callable(gui_get):
+                    try:
+                        cam = gui_get()
+                    except Exception:
+                        cam = None
+            if cam is None:
+                try:
+                    cam = self.GetLink(_IDs.RENDER_CAMERA)
+                except Exception:
+                    cam = None
+            s.render_camera = cam
+        except Exception:
+            s.render_camera = getattr(s, "render_camera", None)
 
         s.create_anim_cam = bool(self.GetBool(_IDs.CREATE_ANIM_CAM))
         s.replace_rig = bool(self.GetBool(_IDs.REPLACE_RIG))
@@ -443,6 +804,19 @@ class C4D2GSDialog(c4d.gui.GeDialog):
                 obj = None
             if obj is not None:
                 return obj
+        # Some C4D versions accept GetLink without a second arg or with None.
+        try:
+            obj = self.GetLink(_IDs.TARGET_LINK)
+        except Exception:
+            obj = None
+        if obj is not None:
+            return obj
+        try:
+            obj = self.GetLink(_IDs.TARGET_LINK, None)
+        except Exception:
+            obj = None
+        if obj is not None:
+            return obj
         return None
 
     def _set_link_target(self, obj):
@@ -466,6 +840,44 @@ class C4D2GSDialog(c4d.gui.GeDialog):
     # ------------------------------------------------------------------
 
     def Command(self, cid, msg):
+        # Header button tab switches (minimal: Object, Space, Export)
+        if cid in (_IDs.TAB_BTN_OBJECT, _IDs.TAB_BTN_SPACE, _IDs.TAB_BTN_EXPORT):
+            mapping = {
+                _IDs.TAB_BTN_OBJECT: 0,
+                _IDs.TAB_BTN_SPACE: 1,
+                _IDs.TAB_BTN_EXPORT: 2,
+            }
+            sel = mapping.get(cid, 0)
+            # Directly enable/disable pane groups so button presses respond immediately
+            try:
+                self.Enable(101, sel == 0)
+                self.Enable(102, sel == 1)
+                self.Enable(106, sel == 2)
+                # Ensure unused panes are disabled
+                try:
+                    self.Enable(105, False)
+                    self.Enable(103, False)
+                    self.Enable(104, False)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            # Also update combo fallback for persistence
+            try:
+                self.SetInt32(_IDs.TAB_SELECTOR, sel)
+            except Exception:
+                pass
+            try:
+                c4d.GePrint("[C4D2GS] Command: header button pressed, sel={}".format(sel))
+            except Exception:
+                pass
+            if self._values_ready:
+                try:
+                    self._settings.last_tab = sel
+                    _save_settings(self._settings)
+                except Exception:
+                    pass
+            return True
         if cid == _IDs.TARGET_LINK:
             doc = c4d.documents.GetActiveDocument()
             link_obj = self._get_link_target(doc)
@@ -487,6 +899,30 @@ class C4D2GSDialog(c4d.gui.GeDialog):
                 if self._values_ready:
                     self._read_ui()
                     _save_settings(self._settings)
+            return True
+
+        if cid == _IDs.MANUAL_ANCHOR_CHECKBOX:
+            enabled = bool(self.GetBool(_IDs.MANUAL_ANCHOR_CHECKBOX))
+            try:
+                self.Enable(_IDs.MANUAL_ANCHOR_GROUP, enabled)
+                self.Enable(_IDs.MANUAL_ANCHOR_GROUP_FIELD, enabled)
+            except Exception:
+                pass
+            if self._values_ready:
+                self._read_ui()
+                _save_settings(self._settings)
+            return True
+
+        if cid == _IDs.MANUAL_Y_HEIGHT_CHECKBOX:
+            enabled = bool(self.GetBool(_IDs.MANUAL_Y_HEIGHT_CHECKBOX))
+            try:
+                self.Enable(_IDs.MANUAL_Y_HEIGHT_GROUP, enabled)
+                self.Enable(_IDs.MANUAL_Y_HEIGHT_FIELD, enabled)
+            except Exception:
+                pass
+            if self._values_ready:
+                self._read_ui()
+                _save_settings(self._settings)
             return True
 
         if cid == _IDs.BTN_CREATE_RIG:
@@ -607,6 +1043,28 @@ class C4D2GSDialog(c4d.gui.GeDialog):
                 self._read_ui()
                 _save_settings(self._settings)
             self.Close()
+            return True
+
+        if cid == _IDs.TAB_SELECTOR:
+            # Update visible pane and persist selection
+            try:
+                sel = int(self.GetInt32(_IDs.TAB_SELECTOR))
+            except Exception:
+                sel = 0
+            try:
+                c4d.GePrint("[C4D2GS] Command: TAB_SELECTOR changed -> sel={}".format(sel))
+            except Exception:
+                pass
+            try:
+                self._update_tab_visibility()
+            except Exception:
+                pass
+            if self._values_ready:
+                try:
+                    self._settings.last_tab = sel
+                    _save_settings(self._settings)
+                except Exception:
+                    pass
             return True
 
         # Refresh status on any field change

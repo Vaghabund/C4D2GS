@@ -70,3 +70,30 @@ def generate_output_folder_name(base_path, target_object_name, overwrite=False):
         suffix += 1
 
     return final_path
+
+
+def generate_space_folder_name(base_path, overwrite=False):
+    """
+    Generate a folder name for Space mode exports.
+
+    Args:
+        base_path (str): The root output path.
+        overwrite (bool): Whether to overwrite existing folders.
+
+    Returns:
+        str: The full path to the Space mode output folder.
+    """
+    folder_name = "Space_COLMAP"
+    output_path = os.path.join(base_path, folder_name)
+
+    if overwrite:
+        return output_path
+
+    # Check for existing folders and append a numeric suffix if needed
+    suffix = 1
+    final_path = output_path
+    while os.path.exists(final_path):
+        final_path = f"{output_path}_{suffix:03d}"
+        suffix += 1
+
+    return final_path

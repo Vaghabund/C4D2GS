@@ -125,7 +125,7 @@ def run_pipeline(doc, settings, target_obj, create_output_dirs=True):
             colmap_result = export_colmap(
                 settings, world_pts, target_pos, colmap_dir,
                 render_cam=render_cam, doc=doc, target_obj=target_obj,
-                camera_matrices=camera_matrices,
+                camera_matrices=camera_matrices, overwrite=getattr(settings, "overwrite_export", False),
             )
 
         doc.SetTime(c4d.BaseTime(0, settings.fps))
@@ -188,3 +188,71 @@ def run_colmap_only(doc, settings, target_obj):
         camera_matrices=camera_matrices,
     )
     return colmap_result
+
+
+def generate_space_clusters(doc, settings, anchors):
+    
+    clusters = []
+
+    for anchor in anchors:
+        cluster = []
+        unit_pts, _, _ = generate_unit_points(settings)
+        world_pts = [anchor + p * settings.cluster_radius for p in unit_pts]
+
+        for i, wpos in enumerate(world_pts):
+            cam = _make_camera_object(settings.camera_type)
+            cam.SetName("ClusterCam_{:04d}".format(i))
+            cam.SetAbsPos(wpos)
+            doc.InsertObject(cam)
+            doc.AddUndo(c4d.UNDOTYPE_NEWOBJ, cam)
+            cluster.append(cam)
+
+        clusters.append(cluster)
+
+    return clusters
+
+
+def generate_anchors(doc, settings):
+    
+    anchors = []
+
+    if settings.anchor_mode == 0:
+        bounds = settings.bounding_box
+        grid_size = settings.grid_size
+        y_height = settings.auto_y_height
+
+        for x in range(grid_size[0]):
+            for z in range(grid_size[1]):
+                pos = c4d.Vector(
+                    bounds[0] + x * bounds[2],
+                    y_height,
+                    bounds[1] + z * bounds[3],
+                )
+                anchors.append(pos)
+
+    elif settings.anchor_mode == 1:
+        null_group = settings.anchor_null_group
+        if null_group:
+            child = null_group.GetDown()
+            while child:
+                anchors.append(child.GetMg().off)
+                child = child.GetNext()
+
+    return anchors
+
+
+def generate_spherical_cameras(doc, settings, anchors):
+    
+    spherical_cameras = []
+
+    for anchor in anchors:
+
+        cam = c4d.BaseObject(c4d.Ocamera)
+        cam.SetName("SphericalCam")
+        cam[c4d.CAMERA_PROJECTION] = c4d.PcameraSpherical
+        cam.SetAbsPos(anchor)
+        doc.InsertObject(cam)
+        doc.AddUndo(c4d.UNDOTYPE_NEWOBJ, cam)
+        spherical_cameras.append(cam)
+
+    return spherical_cameras

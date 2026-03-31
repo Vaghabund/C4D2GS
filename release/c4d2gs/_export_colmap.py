@@ -43,12 +43,15 @@ def _write_cameras_txt(path, intrinsics, res_x, res_y):
 
 
 
-def export_colmap(settings, world_points, target_pos, output_dir,
+def export_colmap(settings, world_points, target_pos, base_output_dir,
                   render_cam=None, doc=None, target_obj=None,
-                  camera_matrices=None):
+                  camera_matrices=None, overwrite=False):
     
     if not world_points:
         return None
+
+
+    output_dir = generate_output_folder_name(base_output_dir, target_obj.GetName(), overwrite)
 
     output_dir = _normalize_path(output_dir)
     if not output_dir:

@@ -36,3 +36,39 @@ def _relative_frame_image_path(settings, frame_index):
 
 def _nerf_file_path(settings, frame_index):
     return os.path.join("images", os.path.basename(_frame_image_path(settings, frame_index))).replace("\\", "/")
+
+
+def generate_output_folder_name(base_path, target_object_name, overwrite=False):
+    
+    folder_name = f"Object_{target_object_name}_COLMAP"
+    output_path = os.path.join(base_path, folder_name)
+
+    if overwrite:
+        return output_path
+
+
+    suffix = 1
+    final_path = output_path
+    while os.path.exists(final_path):
+        final_path = f"{output_path}_{suffix:03d}"
+        suffix += 1
+
+    return final_path
+
+
+def generate_space_folder_name(base_path, overwrite=False):
+    
+    folder_name = "Space_COLMAP"
+    output_path = os.path.join(base_path, folder_name)
+
+    if overwrite:
+        return output_path
+
+
+    suffix = 1
+    final_path = output_path
+    while os.path.exists(final_path):
+        final_path = f"{output_path}_{suffix:03d}"
+        suffix += 1
+
+    return final_path

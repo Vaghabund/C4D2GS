@@ -1,7 +1,7 @@
 # C4D2GS — Plugin Expansion Brainstorm
 **Version:** Post-v1.0.0 Planning Document  
-**Status:** Brainstorm / Pre-implementation  
-**Date:** 2026-03-27
+**Status:** Updated — Implementation in Progress  
+**Date:** 2026-03-31
 
 ---
 
@@ -17,8 +17,8 @@ The dialog is restructured into three top-level tabs:
 
 | Tab | Status | Description |
 |-----|--------|-------------|
-| **Object** | Current functionality, largely as-is | Single or multi-object inward-facing rig |
-| **Space** | New | Outward-facing cluster scanning for room/environment capture |
+| **Object** | Implemented | Single or multi-object inward-facing rig |
+| **Space** | Implemented | Outward-facing cluster scanning for room/environment capture |
 | **Import** | Deferred — not yet decided if included | COLMAP data import and scene reconstruction |
 
 ---
@@ -27,6 +27,7 @@ The dialog is restructured into three top-level tabs:
 
 ### 2.1 Additional Camera Groups
 
+- **Status:** Implemented
 - The user can drag and drop a **null object group** containing custom Cinema 4D cameras into a new object link field in the Object tab.
 - For each camera in the group, the plugin reads its world matrix (`GetMg()`) and **appends one keyframe per camera to the existing animated render camera**.
 - This means additional cameras are just extra frames at the end of the existing animation sequence — no new camera objects, no changes to `cameras.txt` intrinsics, no new image sequences.
@@ -36,6 +37,7 @@ The dialog is restructured into three top-level tabs:
 
 ### 2.2 Multi-Object Support
 
+- **Status:** Deferred
 - A new **"Add Object"** button in the Object tab creates additional target object link fields dynamically.
 - Each target object runs the full pipeline independently (its own rig, its own COLMAP export).
 - Each target writes to its own subfolder under the root output path (see Section 4 for naming convention).
@@ -48,6 +50,7 @@ The Space tab handles **environment/room-scale scanning** using outward-facing c
 
 ### 3.1 Core Concept
 
+- **Status:** Implemented
 - Instead of one sphere rig orbiting an object, **multiple camera clusters** are distributed throughout a space.
 - Each cluster is a small icosphere (or sphere-sampled) arrangement of cameras pointing **outward** from the cluster center.
 - All clusters are combined into a **single animated render camera** using the same keyframe-append logic as the Object tab — one frame per camera position across all clusters.
@@ -56,7 +59,8 @@ The Space tab handles **environment/room-scale scanning** using outward-facing c
 
 ### 3.2 Anchor Placement Modes
 
-Anchor points define where each cluster is centered. Two modes:
+- **Status:** Implemented
+- Anchor points define where each cluster is centered. Two modes:
 
 #### Auto Placement
 - The user defines a **bounding area** (likely a bounding box or XZ extents).
@@ -72,21 +76,12 @@ Anchor points define where each cluster is centered. Two modes:
 - Nulls can be positioned freely on all axes — full spatial freedom.
 - The plugin reads each null's world position and generates one icosphere camera cluster centered on that position.
 
-### 3.3 Cluster Parameters (shared across both modes)
+### 3.3 Spherical Camera Option
 
-A dedicated **Cluster** section in the Space tab:
-
-| Parameter | Description |
-|-----------|-------------|
-| Cameras per Cluster | How many cameras in each icosphere cluster |
-| Sampling Mode | Spiral / Icosphere / Fibonacci (reuses existing `generate_unit_points` logic) |
-| Cluster Radius | Sphere radius for each cluster |
-
-### 3.4 Sparse Points for Space Mode
-
-- Current surface sampling (`generate_sparse_points_from_surface`) targets a single object — this does not apply directly to room-scale.
-- For Space mode, sparse points likely need to come from scene geometry as a whole, or from geometry within each cluster's radius.
-- **This is an open problem** — to be resolved during implementation planning.
+- **Status:** Implemented
+- Users can choose to use spherical cameras as anchors instead of clusters.
+- Each anchor point has a single spherical camera, reducing the number of cameras per anchor.
+- Spherical cameras render equirectangular images for environment mapping.
 
 ---
 
@@ -94,7 +89,8 @@ A dedicated **Cluster** section in the Space tab:
 
 ### 4.1 New Subfolder Structure
 
-All exports now write into a named subfolder under the user-defined root output path, rather than directly into the root:
+- **Status:** In Progress
+- All exports now write into a named subfolder under the user-defined root output path, rather than directly into the root:
 
 ```
 <Output Path>/

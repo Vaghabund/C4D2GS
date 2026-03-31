@@ -286,3 +286,23 @@ def generate_sparse_points_in_core_volume(target_obj, target_pos, count=256,
         sz = r * math.sin(phi) * math.sin(theta)
         out.append((target_pos + c4d.Vector(sx, sy, sz), None))
     return out
+
+
+def generate_sparse_points_for_space(doc, settings, anchors):
+    
+    sparse_points = []
+
+    for anchor in anchors:
+        cluster_radius = settings.cluster_radius
+        for obj in _iter_hierarchy(doc.GetFirstObject()):
+            if not obj.GetType() == c4d.Opolygon:
+                continue
+
+            center = center_of_object(obj)
+            if (center - anchor).GetLength() <= cluster_radius:
+                rad = get_object_bounding_radius(obj)
+                sparse_points.append(center + c4d.Vector(random.uniform(-rad, rad),
+                                                         random.uniform(-rad, rad),
+                                                         random.uniform(-rad, rad)))
+
+    return sparse_points

@@ -208,3 +208,45 @@ def configure_render_settings(doc, settings, render_cam, frame_count, create_out
             bd = doc.GetActiveBaseDraw()
             if bd is not None:
                 bd.SetSceneCamera(render_cam)
+
+
+def append_camera_group_keyframes(doc, settings, render_cam, camera_group):
+    """
+    Append keyframes for additional cameras in a group to the render camera.
+
+    :param doc: The Cinema 4D document.
+    :param settings: Plugin settings.
+    :param render_cam: The animated render camera.
+    :param camera_group: The group of additional cameras.
+    """
+    if not render_cam or not camera_group:
+        return
+
+    desc_x = c4d.DescID(
+        c4d.DescLevel(c4d.ID_BASEOBJECT_REL_POSITION, c4d.DTYPE_VECTOR, 0),
+        c4d.DescLevel(c4d.VECTOR_X, c4d.DTYPE_REAL, 0),
+    )
+    desc_y = c4d.DescID(
+        c4d.DescLevel(c4d.ID_BASEOBJECT_REL_POSITION, c4d.DTYPE_VECTOR, 0),
+        c4d.DescLevel(c4d.VECTOR_Y, c4d.DTYPE_REAL, 0),
+    )
+    desc_z = c4d.DescID(
+        c4d.DescLevel(c4d.ID_BASEOBJECT_REL_POSITION, c4d.DTYPE_VECTOR, 0),
+        c4d.DescLevel(c4d.VECTOR_Z, c4d.DTYPE_REAL, 0),
+    )
+
+    frame_offset = render_cam.GetDocument().GetMaxTime().GetFrame(settings.fps)
+
+    child = camera_group.GetDown()
+    while child:
+        if _is_camera_obj(child):
+            world_pos = child.GetMg().off
+            t = c4d.BaseTime(frame_offset, settings.fps)
+            _add_step_key(render_cam, desc_x, t, world_pos.x)
+            _add_step_key(render_cam, desc_y, t, world_pos.y)
+            _add_step_key(render_cam, desc_z, t, world_pos.z)
+            frame_offset += 1
+        child = child.GetNext()
+
+    doc.SetTime(c4d.BaseTime(0, settings.fps))
+    c4d.EventAdd()

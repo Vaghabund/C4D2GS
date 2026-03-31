@@ -25,6 +25,19 @@ _DEFAULTS = dict(
     sampling_mode=0,
     spiral_turns=6.0,
     spiral_pole_margin=0.06,
+
+    anchor_mode=0,
+    manual_anchor_enabled=False,
+    anchor_null_group=None,
+    manual_y_height_enabled=False,
+    manual_y_height=0.0,
+    cluster_cam_count=1,
+    cluster_radius=10.0,
+    auto_y_height=0.0,
+
+    overwrite_export=False,
+
+    last_tab=0,
     output_path=os.path.join(os.path.expanduser("~"), "Documents",
                              "gs_capture"),
     output_format=getattr(c4d, "FILTER_PNG", 1023671),
@@ -44,6 +57,10 @@ _DEFAULTS = dict(
     sparse_count=30000,
     sparse_radius_factor=0.35,
     camera_type=0,
+
+    render_engine=0,
+    render_use_global=True,
+    render_samples=8,
 )
 
 
