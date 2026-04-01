@@ -44,6 +44,12 @@ _DEFAULTS = dict(
     overwrite_export=False,
     # UI state
     last_tab=0,
+    last_mode=0,             # 0=Object mode, 1=Space mode
+    last_export_path="",     # Path of last successful export folder
+    # Space tab — auto anchor grid
+    grid_layout=0,           # 0=Grid, 1=Random
+    grid_x=3,                # auto-anchor grid columns
+    grid_y=3,                # auto-anchor grid rows
     output_path=os.path.join(os.path.expanduser("~"), "Documents",
                              "gs_capture"),
     output_format=getattr(c4d, "FILTER_PNG", 1023671),
