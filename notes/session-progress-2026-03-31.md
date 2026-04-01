@@ -49,24 +49,9 @@ These will help confirm whether the native `TAB_CHILD`/`TAB_TABS` route is activ
 - Top-level UI simplified to three panes: Object, Space, Export (both native and fallback paths updated to this minimal set) to match the user's request to "get back to basics".
 - Runtime behavior still unconfirmed in the user's Cinema 4D instance: user reported that panes were being disabled (greyed) rather than hidden. Debug prints were added to confirm which code path runs in the C4D console.
 
-## Immediate next steps (recommended)
-1. Install the generated release zip into Cinema 4D and restart the app.
-2. Open the plugin and copy any Console output lines containing the prefix `[C4D2GS]` and paste them into the issue/chat. Those lines determine whether native TabGroup is available or the fallback is used and what the saved `last_tab` value is.
-3. If native tabs are unavailable and the fallback continues to only disable controls rather than hide them, I can implement one of the following:
-   - Re-create the dialog contents on tab selection (more intrusive but ensures full hide/show behavior), or
-   - Emulate hiding by reparenting widgets if supported by the runtime, or
-   - Continue iterating on the header-button fallback UI to make the visual state clearer.
-4. Optionally, commit the `src` edits to your branch (I have not created a commit or PR; I only edited working files and rebuilt `release`).
 
 ## Notes / additional context
 - The code has many defensive try/except blocks because Cinema 4D exposes different GUI signatures across versions and plugin environments; this is intentional to maximize compatibility.
 - The primary locus for further UI tweaks is `src/c4d2gs/_ui_dialog.py` — concentrate debug and layout changes there.
-
----
-
-If you'd like, I can:
-- Commit these changes with a concise commit message, or
-- Add a second backup file with a timestamped copy in `notes/`, or
-- Immediately implement the dialog-recreate approach for the fallback path so inactive panes are fully hidden.
 
 
