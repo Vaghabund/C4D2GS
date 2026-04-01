@@ -144,7 +144,15 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         self._additional_cameras_gui = None
         self._is_auto_updating = False
         self._values_ready = False
-        self._current_mode = int(getattr(self._settings, "last_mode", 0))
+        # Load and clamp last_mode to the supported range (0=Object, 1=Space).
+        # Out-of-range or corrupt values fall back to 0 (Object mode).
+        try:
+            loaded_mode = int(getattr(self._settings, "last_mode", 0))
+        except (TypeError, ValueError):
+            loaded_mode = 0
+        if loaded_mode not in (0, 1):
+            loaded_mode = 0
+        self._current_mode = loaded_mode
 
     # ------------------------------------------------------------------
     # Layout
@@ -556,6 +564,12 @@ class C4D2GSDialog(c4d.gui.GeDialog):
                 self.SetInt32(_IDs.SPACE_SAMPLING_MODE, int(s.sampling_mode))
             except Exception:
                 pass
+            # Restore the manual anchor linkbox from settings (rebuilt on every mode swap)
+            try:
+                if getattr(s, "anchor_null_group", None) is not None:
+                    self.SetLink(_IDs.MANUAL_ANCHOR_GROUP_FIELD, s.anchor_null_group)
+            except Exception:
+                pass
             self._update_anchor_mode_ui()
 
     def _update_spiral_ui(self):
@@ -653,14 +667,17 @@ class C4D2GSDialog(c4d.gui.GeDialog):
         except Exception:
             pass
 
-        # Manual anchor group link
-        manual_group = None
-        try:
-            manual_group = self.GetLink(_IDs.MANUAL_ANCHOR_GROUP_FIELD,
-                                        getattr(c4d, "BaseObject", None))
-        except Exception:
+        # Manual anchor group link — only read when the Space-mode widget is present.
+        # In Object mode the linkbox is not in the layout, so skip the read to avoid
+        # clearing a previously selected anchor group stored in settings.
+        if self._current_mode == 1:
             manual_group = None
-        s.anchor_null_group = manual_group
+            try:
+                manual_group = self.GetLink(_IDs.MANUAL_ANCHOR_GROUP_FIELD,
+                                            getattr(c4d, "BaseObject", None))
+            except Exception:
+                manual_group = None
+            s.anchor_null_group = manual_group
 
         try:
             s.auto_y_height = float(self.GetFloat(_IDs.AUTO_Y_HEIGHT))
@@ -721,6 +738,11 @@ class C4D2GSDialog(c4d.gui.GeDialog):
             if normalised:
                 s.output_path = normalised
                 self.SetString(_IDs.OUTPUT_PATH, normalised)
+            else:
+                # User explicitly cleared the field — propagate the empty value so
+                # the settings and UI stay in sync.  The pipeline will reject it
+                # with ERROR_NO_OUTPUT_PATH before attempting any file operations.
+                s.output_path = ""
         except Exception:
             pass
         try:
